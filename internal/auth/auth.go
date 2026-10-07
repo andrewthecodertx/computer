@@ -29,7 +29,7 @@ type SigninRequest struct {
 type SignupRequest struct {
 	Email    string
 	Password string
-	Name     *string
+	Name     string
 }
 
 // SignupResponse is returned on successful signup.
@@ -59,11 +59,6 @@ type UserIdentity struct {
 	Image  *string
 	Role   string
 }
-
-// SessionCookie signs and verifies the JWT session cookie.
-// TODO: implement HS256 with the config secret.
-func SignSession(u UserIdentity, secret string) (string, error) { return "", nil }
-func VerifySession(token, secret string) (*UserIdentity, error)  { return nil, nil }
 
 // OidcStatus returns whether the Authelia provider is enabled.
 // TODO: reuse the placeholder check from internal/oidc.

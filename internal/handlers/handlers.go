@@ -59,8 +59,15 @@ func BadRequest(message string) Error {
 func Conflict(message string) Error {
 	return Error{Error: message}
 }
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+
+// WriteJSON writes v as JSON with the given status.
+func WriteJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeJSON is the lowercase alias used by the stub handlers.
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	WriteJSON(w, status, v)
 }

@@ -32,74 +32,96 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux.HandleFunc("POST /api/auth/login", auth.HandleLogin)
 	mux.HandleFunc("GET /api/auth/", auth.HandleAuth) // csrf, callbacks, session, signout
 	mux.HandleFunc("POST /api/auth/", auth.HandleAuth)
-	mux.HandleFunc("GET /api/me", auth.HandleMe)
+	mux.HandleFunc("GET /api/me", authed(auth.HandleMe))
 
 	// 4.2 Admin (use real user; 403 unless ADMIN)
-	mux.HandleFunc("GET /api/admin/users", authguard.HandleAdminListUsers)
-	mux.HandleFunc("PATCH /api/admin/users", authguard.HandleAdminPatchUser)
-	mux.HandleFunc("POST /api/admin/view-as", authguard.HandleAdminViewAs)
+	mux.HandleFunc("GET /api/admin/users", admin(authguard.HandleAdminListUsers))
+	mux.HandleFunc("PATCH /api/admin/users", admin(authguard.HandleAdminPatchUser))
+	mux.HandleFunc("POST /api/admin/view-as", admin(authguard.HandleAdminViewAs))
 
 	// 4.3 Bookmarks
-	mux.HandleFunc("GET /api/bookmarks", handlers.HandleBookmarksList)
-	mux.HandleFunc("POST /api/bookmarks", handlers.HandleBookmarksCreate)
-	mux.HandleFunc("GET /api/bookmarks/{id}", handlers.HandleBookmarksGet)
-	mux.HandleFunc("PUT /api/bookmarks/{id}", handlers.HandleBookmarksUpdate)
-	mux.HandleFunc("DELETE /api/bookmarks/{id}", handlers.HandleBookmarksDelete)
-	mux.HandleFunc("POST /api/bookmarks/{id}/share", handlers.HandleBookmarksShare)
-	mux.HandleFunc("GET /api/bookmarks/{id}/markdown", handlers.HandleBookmarksMarkdown)
+	mux.HandleFunc("GET /api/bookmarks", authed(handlers.HandleBookmarksList))
+	mux.HandleFunc("POST /api/bookmarks", authed(handlers.HandleBookmarksCreate))
+	mux.HandleFunc("GET /api/bookmarks/{id}", authed(handlers.HandleBookmarksGet))
+	mux.HandleFunc("PUT /api/bookmarks/{id}", authed(handlers.HandleBookmarksUpdate))
+	mux.HandleFunc("DELETE /api/bookmarks/{id}", authed(handlers.HandleBookmarksDelete))
+	mux.HandleFunc("POST /api/bookmarks/{id}/share", authed(handlers.HandleBookmarksShare))
+	mux.HandleFunc("GET /api/bookmarks/{id}/markdown", authed(handlers.HandleBookmarksMarkdown))
 	mux.HandleFunc("GET /api/preview", handlers.HandlePreview)
 
 	// 4.4 Tags
-	mux.HandleFunc("GET /api/tags", handlers.HandleTagsList)
-	mux.HandleFunc("POST /api/tags", handlers.HandleTagsCreate)
-	mux.HandleFunc("PUT /api/tags/{id}", handlers.HandleTagsUpdate)
-	mux.HandleFunc("DELETE /api/tags/{id}", handlers.HandleTagsDelete)
+	mux.HandleFunc("GET /api/tags", authed(handlers.HandleTagsList))
+	mux.HandleFunc("POST /api/tags", authed(handlers.HandleTagsCreate))
+	mux.HandleFunc("PUT /api/tags/{id}", authed(handlers.HandleTagsUpdate))
+	mux.HandleFunc("DELETE /api/tags/{id}", authed(handlers.HandleTagsDelete))
 
 	// 4.5 Kanban columns
-	mux.HandleFunc("GET /api/kanban/columns", handlers.HandleKanbanColumnsList)
-	mux.HandleFunc("POST /api/kanban/columns", handlers.HandleKanbanColumnsCreate)
-	mux.HandleFunc("PUT /api/kanban/columns", handlers.HandleKanbanColumnsReorder)
-	mux.HandleFunc("PATCH /api/kanban/columns/{id}", handlers.HandleKanbanColumnsUpdate)
-	mux.HandleFunc("DELETE /api/kanban/columns/{id}", handlers.HandleKanbanColumnsDelete)
+	mux.HandleFunc("GET /api/kanban/columns", authed(handlers.HandleKanbanColumnsList))
+	mux.HandleFunc("POST /api/kanban/columns", authed(handlers.HandleKanbanColumnsCreate))
+	mux.HandleFunc("PUT /api/kanban/columns", authed(handlers.HandleKanbanColumnsReorder))
+	mux.HandleFunc("PATCH /api/kanban/columns/{id}", authed(handlers.HandleKanbanColumnsUpdate))
+	mux.HandleFunc("DELETE /api/kanban/columns/{id}", authed(handlers.HandleKanbanColumnsDelete))
 
 	// 4.6 Pages
-	mux.HandleFunc("GET /api/pages", handlers.HandlePagesList)
-	mux.HandleFunc("POST /api/pages", handlers.HandlePagesCreate)
-	mux.HandleFunc("PUT /api/pages", handlers.HandlePagesReorder)
-	mux.HandleFunc("GET /api/pages/{id}", handlers.HandlePagesGet)
-	mux.HandleFunc("PATCH /api/pages/{id}", handlers.HandlePagesUpdate)
-	mux.HandleFunc("DELETE /api/pages/{id}", handlers.HandlePagesDelete)
-	mux.HandleFunc("GET /api/pages/{id}/markdown", handlers.HandlePagesMarkdown)
+	mux.HandleFunc("GET /api/pages", authed(handlers.HandlePagesList))
+	mux.HandleFunc("POST /api/pages", authed(handlers.HandlePagesCreate))
+	mux.HandleFunc("PUT /api/pages", authed(handlers.HandlePagesReorder))
+	mux.HandleFunc("GET /api/pages/{id}", authed(handlers.HandlePagesGet))
+	mux.HandleFunc("PATCH /api/pages/{id}", authed(handlers.HandlePagesUpdate))
+	mux.HandleFunc("DELETE /api/pages/{id}", authed(handlers.HandlePagesDelete))
+	mux.HandleFunc("GET /api/pages/{id}/markdown", authed(handlers.HandlePagesMarkdown))
 
 	// 4.7 Signals
-	mux.HandleFunc("GET /api/bookmarks/{id}/signals", handlers.HandleSignalsList)
-	mux.HandleFunc("POST /api/bookmarks/{id}/signals", handlers.HandleSignalsCreate)
-	mux.HandleFunc("PATCH /api/signal-sources/{id}", handlers.HandleSignalSourcesUpdate)
-	mux.HandleFunc("DELETE /api/signal-sources/{id}", handlers.HandleSignalSourcesDelete)
+	mux.HandleFunc("GET /api/bookmarks/{id}/signals", authed(handlers.HandleSignalsList))
+	mux.HandleFunc("POST /api/bookmarks/{id}/signals", authed(handlers.HandleSignalsCreate))
+	mux.HandleFunc("PATCH /api/signal-sources/{id}", authed(handlers.HandleSignalSourcesUpdate))
+	mux.HandleFunc("DELETE /api/signal-sources/{id}", authed(handlers.HandleSignalSourcesDelete))
 
 	// 4.8 Alerts, contacts, email, dates, users
-	mux.HandleFunc("GET /api/alerts/check", handlers.HandleAlertsCheck)
-	mux.HandleFunc("DELETE /api/alerts/{bookmarkId}", handlers.HandleAlertsDismiss)
-	mux.HandleFunc("GET /api/contacts", handlers.HandleContactsList)
-	mux.HandleFunc("POST /api/contacts/sync", handlers.HandleContactsSync)
-	mux.HandleFunc("GET /api/settings/imap", handlers.HandleImapGet)
-	mux.HandleFunc("POST /api/settings/imap", handlers.HandleImapSave)
-	mux.HandleFunc("POST /api/imap/test", handlers.HandleImapTest)
-	mux.HandleFunc("GET /api/imap/check", handlers.HandleImapCheck)
-	mux.HandleFunc("GET /api/shared-dates", handlers.HandleSharedDatesList)
-	mux.HandleFunc("POST /api/shared-dates", handlers.HandleSharedDatesCreate)
-	mux.HandleFunc("GET /api/users/search", handlers.HandleUsersSearch)
+	mux.HandleFunc("GET /api/alerts/check", authed(handlers.HandleAlertsCheck))
+	mux.HandleFunc("DELETE /api/alerts/{bookmarkId}", authed(handlers.HandleAlertsDismiss))
+	mux.HandleFunc("GET /api/contacts", authed(handlers.HandleContactsList))
+	mux.HandleFunc("POST /api/contacts/sync", authed(handlers.HandleContactsSync))
+	mux.HandleFunc("GET /api/settings/imap", authed(handlers.HandleImapGet))
+	mux.HandleFunc("POST /api/settings/imap", authed(handlers.HandleImapSave))
+	mux.HandleFunc("POST /api/imap/test", authed(handlers.HandleImapTest))
+	mux.HandleFunc("GET /api/imap/check", authed(handlers.HandleImapCheck))
+	mux.HandleFunc("GET /api/shared-dates", authed(handlers.HandleSharedDatesList))
+	mux.HandleFunc("POST /api/shared-dates", authed(handlers.HandleSharedDatesCreate))
+	mux.HandleFunc("GET /api/users/search", authed(handlers.HandleUsersSearch))
 
 	// 4.9 Public page (no login)
 	mux.HandleFunc("GET /share/bookmark/{id}", handlers.HandlePublicBookmark)
 
 	return &http.Server{
-		Handler:      mux,
+		Handler:      withDB(database, mux),
 		Addr:         ":" + port(),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
+}
+
+// withDB carries the database into request context so handlers can pull it via
+// db.FromContext. This keeps the DB out of global state (testable, swappable).
+func withDB(database *db.DB, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := db.NewContext(r.Context(), database)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// authed wraps a data route with session authentication (401 if no valid
+// session). All data endpoints follow: resolve effective user -> 401 ->
+// ownership -> 404 -> act (porting guide 5.1).
+func authed(fn http.HandlerFunc) http.HandlerFunc {
+	return auth.AuthMiddleware(http.HandlerFunc(fn)).ServeHTTP
+}
+
+// admin wraps a route with auth + admin-only (403 unless ADMIN).
+// AuthMiddleware runs first (attaches the session), then RequireAdmin checks it.
+func admin(fn http.HandlerFunc) http.HandlerFunc {
+	return auth.AuthMiddleware(auth.RequireAdmin(http.HandlerFunc(fn))).ServeHTTP
 }
 
 // port returns the listen port from PORT env, defaulting to 8080.

@@ -1,6 +1,9 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 // DBURL returns the database connection string, preferring DATABASE_URL and
 // falling back to DB_URL (used by the Makefile).
@@ -14,14 +17,14 @@ func DBURL() string {
 // Config holds the runtime configuration, loaded from environment variables.
 // See porting guide section 7.
 type Config struct {
-	DatabaseURL     string
-	NextAuthSecret  string // == AUTH_SECRET; signs sessions and derives IMAP key
-	AuthSecret      string
-	NextAuthURL     string
-	OIDCIssuer      string
-	OIDCClientID    string
+	DatabaseURL      string
+	NextAuthSecret   string // == AUTH_SECRET; signs sessions and derives IMAP key
+	AuthSecret       string
+	NextAuthURL      string
+	OIDCIssuer       string
+	OIDCClientID     string
 	OIDCClientSecret string
-	AdminEmails     []string
+	AdminEmails      []string
 	DEMODemoPassword string
 }
 
@@ -35,7 +38,7 @@ func Load() *Config {
 		OIDCIssuer:       os.Getenv("OIDC_ISSUER"),
 		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
 		OIDCClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
-		AdminEmails:      splitEmails(os.Getenv("ADMIN_EMAILS")),
+		AdminEmails:      AdminEmails(),
 		DEMODemoPassword: os.Getenv("DEMO_PASSWORD"),
 	}
 }
@@ -49,7 +52,26 @@ func (c *Config) Secret() string {
 	return c.AuthSecret
 }
 
-func splitEmails(s string) []string {
-	// TODO: split on commas, trim, lowercase.
-	return nil
+// AdminEmails splits env ADMIN_EMAILS on commas, trims, lowercases.
+func AdminEmails() []string {
+	s := os.Getenv("ADMIN_EMAILS")
+	if s == "" {
+		return nil
+	}
+	out := strings.Split(s, ",")
+	for i := range out {
+		out[i] = strings.TrimSpace(out[i])
+	}
+	return out
+}
+
+// IsAdminEmail reports whether email is listed in ADMIN_EMAILS.
+func IsAdminEmail(email string) bool {
+	e := strings.ToLower(strings.TrimSpace(email))
+	for _, a := range AdminEmails() {
+		if strings.ToLower(a) == e {
+			return true
+		}
+	}
+	return false
 }
