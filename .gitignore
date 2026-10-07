@@ -1,0 +1,7 @@
+# Next.js build output
+web/.next/
+web/out/
+web/node_modules/
+
+# Local env
+web/.env

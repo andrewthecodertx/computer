@@ -1,12 +1,15 @@
+version: "3.9"
 
-# computer — Go backend + PostgreSQL, fully self-contained and sandboxed.
+# computer — Go backend + Next.js front-end + PostgreSQL, fully self-contained
+# and sandboxed.
 #
-#   docker compose -f docker-compose.full.yml up -d   # db + app from scratch
+#   docker compose -f docker-compose.full.yml up -d   # db + app + web from scratch
 #   docker compose -f docker-compose.full.yml down    # stop (volumes persist)
 #
-# Unlike docker-compose.yml (app only), this also provisions the database on a
-# dedicated `computer` network. The app reaches the DB at `db:5432` via Docker
-# DNS. Both services are isolated from the host's other containers.
+# All three services share the `computer` network. The app reaches the DB at
+# `db:5432`; the web app proxies /api/* (except /api/auth/*) to the Go backend
+# at `go-computer:8080`. Everything is isolated from the host's other
+# containers.
 
 services:
   db:
@@ -41,6 +44,24 @@ services:
       NEXTAUTH_SECRET: "change-me-in-production"
       AUTH_SECRET: "change-me-in-production"
       NEXTAUTH_URL: "http://localhost:8080"
+    networks:
+      - computer
+
+  web:
+    build: ./web
+    container_name: computer-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      API_BASE_URL: "http://go-computer:8080"
+      DATABASE_URL: "postgres://computer:computer@db:5432/computer?sslmode=disable"
+      NEXTAUTH_SECRET: "change-me-in-production"
+      AUTH_SECRET: "change-me-in-production"
+      NEXTAUTH_URL: "http://localhost:3000"
     networks:
       - computer
 
