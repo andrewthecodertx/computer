@@ -16,7 +16,9 @@ type DB struct {
 
 // New connects to the database using the given config.
 func New(cfg *config.Config) (*DB, error) {
-	// TODO: open, ping, run migrations.
+	// TODO: open, ping, run migrations. Connection string:
+	//   cfg.DBURL()  (DATABASE_URL or DB_URL, e.g.
+	//   postgres://linkos:linkos@localhost:5432/linkos?sslmode=disable)
 	return &DB{}, nil
 }
 

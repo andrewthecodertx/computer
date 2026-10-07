@@ -1,0 +1,53 @@
+
+# computer — Go backend + PostgreSQL, fully self-contained and sandboxed.
+#
+#   docker compose -f docker-compose.full.yml up -d   # db + app from scratch
+#   docker compose -f docker-compose.full.yml down    # stop (volumes persist)
+#
+# Unlike docker-compose.yml (app only), this also provisions the database on a
+# dedicated `computer` network. The app reaches the DB at `db:5432` via Docker
+# DNS. Both services are isolated from the host's other containers.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: linkos-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: computer
+      POSTGRES_USER: computer
+      POSTGRES_PASSWORD: computer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U computer -d computer"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - computer
+
+  app:
+    build: .
+    container_name: go-computer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://computer:computer@db:5432/computer?sslmode=disable"
+      NEXTAUTH_SECRET: "change-me-in-production"
+      AUTH_SECRET: "change-me-in-production"
+      NEXTAUTH_URL: "http://localhost:8080"
+    networks:
+      - computer
+
+volumes:
+  pgdata:
+
+networks:
+  computer:
+    driver: bridge
+    name: computer

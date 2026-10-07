@@ -2,6 +2,15 @@ package config
 
 import "os"
 
+// DBURL returns the database connection string, preferring DATABASE_URL and
+// falling back to DB_URL (used by the Makefile).
+func DBURL() string {
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		return v
+	}
+	return os.Getenv("DB_URL")
+}
+
 // Config holds the runtime configuration, loaded from environment variables.
 // See porting guide section 7.
 type Config struct {

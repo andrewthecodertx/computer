@@ -1,12 +1,15 @@
 package http
 
 import (
+	"net/http"
+	"os"
+	"time"
+
 	"github.com/andrew/go-computer/internal/auth"
 	"github.com/andrew/go-computer/internal/authguard"
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/handlers"
-	"net/http"
 )
 
 // NewServer builds the HTTP server with all routes registered.
@@ -16,6 +19,13 @@ import (
 // All routes return JSON unless marked .md. Errors are {error: string}.
 func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux := http.NewServeMux()
+
+	// Health / readiness. No auth, no DB.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 
 	// 4.1 Auth and account
 	mux.HandleFunc("POST /api/signup", auth.HandleSignup)
@@ -83,5 +93,19 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	// 4.9 Public page (no login)
 	mux.HandleFunc("GET /share/bookmark/{id}", handlers.HandlePublicBookmark)
 
-	return &http.Server{Handler: mux}
+	return &http.Server{
+		Handler:      mux,
+		Addr:         ":" + port(),
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+}
+
+// port returns the listen port from PORT env, defaulting to 8080.
+func port() string {
+	if p := os.Getenv("PORT"); p != "" {
+		return p
+	}
+	return "8080"
 }
