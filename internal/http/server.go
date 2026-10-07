@@ -10,6 +10,7 @@ import (
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/handlers"
+	"github.com/andrew/go-computer/internal/oidc"
 )
 
 // NewServer builds the HTTP server with all routes registered.
@@ -33,6 +34,12 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux.HandleFunc("GET /api/auth/", auth.HandleAuth) // csrf, callbacks, session, signout
 	mux.HandleFunc("POST /api/auth/", auth.HandleAuth)
 	mux.HandleFunc("GET /api/me", authed(auth.HandleMe))
+
+	// Authelia OIDC (stub-aware; the client drives the flow via NextAuth)
+	mux.HandleFunc("GET /api/auth/oidc/status", oidc.HandleStatus)
+	mux.HandleFunc("GET /api/auth/oidc/login", oidc.HandleLogin)
+	mux.HandleFunc("GET /api/auth/callback/authelia", oidc.HandleCallback)
+	mux.HandleFunc("POST /api/auth/callback/authelia", oidc.HandleCallback)
 
 	// 4.2 Admin (use real user; 403 unless ADMIN)
 	mux.HandleFunc("GET /api/admin/users", admin(authguard.HandleAdminListUsers))
