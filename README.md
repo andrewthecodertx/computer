@@ -5,22 +5,35 @@ dates, editable kanban boards, pages, previews, sharing, contacts and email sign
 
 ## Run the whole app
 
-Requires Docker with Compose. On a new installation:
+**Client setup guide:** [Running computer](RUNNING.md) covers cloning, setup,
+first login, everyday commands, updates, and troubleshooting on Windows,
+macOS, and Linux.
+
+Requires Docker with Compose v2 or newer. On a new installation:
 
 ```bash
+git clone https://github.com/andrewthecodertx/computer.git
+cd computer
 cp .env.example .env
-openssl rand -hex 32          # put this value in AUTH_SECRET in .env
-make run                     # builds and starts PostgreSQL, Go and Next.js
+docker run --rm node:22-alpine node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
+
+Put the generated value in `AUTH_SECRET` in `.env`, save the file, then run:
+
+```bash
+docker compose up -d --build  # builds and starts PostgreSQL, Go and Next.js
+```
+
+On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
 
 - Web interface: **http://localhost:3000**. Sign up, then sign in.
 - Go API: **http://localhost:8080** (local access; endpoints in [API.md](API.md)).
 - PostgreSQL: `db:5432` inside Docker; not published on the host.
 - First non-`@example.com` account becomes administrator. `ADMIN_EMAILS` can
   promote additional accounts. Existing accounts are preserved on restart.
-- `make stop` stops the stack. It does not delete the database volume.
+- `docker compose down` stops the stack. It does not delete the database volume.
 
-`docker compose up -d --build` is equivalent to `make run`.
+`make run` and `make stop` are optional shortcuts for the Compose commands.
 `docker-compose.full.yml` is a compatibility alias for the same complete stack.
 
 ### Existing Docker database
