@@ -26,7 +26,7 @@ export function BookmarksClient() {
     setLoading(false)
   }, [search])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])
 
   const sorted = [...(bookmarks ?? [])].sort((a: any, b: any) => {
     const va = a?.[sortField] ?? ''
@@ -39,7 +39,7 @@ export function BookmarksClient() {
     else { setSortField(field); setSortDir('asc') }
   }
 
-  const SortIcon = ({ field }: { field: typeof sortField }) => {
+  const sortIcon = (field: typeof sortField) => {
     if (sortField !== field) return null
     return sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
   }
@@ -60,15 +60,15 @@ export function BookmarksClient() {
             <thead>
               <tr className="bg-muted/50 text-left">
                 <th className="px-4 py-3 font-medium cursor-pointer" onClick={() => toggleSort('title')}>
-                  <span className="flex items-center gap-1">Title <SortIcon field="title" /></span>
+                  <span className="flex items-center gap-1">Title {sortIcon('title')}</span>
                 </th>
                 <th className="px-4 py-3 font-medium">URL</th>
                 <th className="px-4 py-3 font-medium">Tags</th>
                 <th className="px-4 py-3 font-medium cursor-pointer" onClick={() => toggleSort('kanbanStatus')}>
-                  <span className="flex items-center gap-1">Status <SortIcon field="kanbanStatus" /></span>
+                  <span className="flex items-center gap-1">Status {sortIcon('kanbanStatus')}</span>
                 </th>
                 <th className="px-4 py-3 font-medium cursor-pointer" onClick={() => toggleSort('updatedAt')}>
-                  <span className="flex items-center gap-1">Updated <SortIcon field="updatedAt" /></span>
+                  <span className="flex items-center gap-1">Updated {sortIcon('updatedAt')}</span>
                 </th>
                 <th className="px-4 py-3 font-medium w-20">Actions</th>
               </tr>

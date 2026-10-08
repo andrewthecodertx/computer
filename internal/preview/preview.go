@@ -1,25 +1,157 @@
 package preview
 
-// Porting guide 3.6, repeated in /api/preview, bookmark create and bookmark update.
-//
-// fetchPreview(url) uses an 8-second timeout and User-Agent
-// "Mozilla/5.0 (compatible; computer/1.0)". It reads OpenGraph ogTitle,
-// ogDescription, the first ogImage URL, and the favicon. A relative favicon is
-// made absolute against the URL's origin; if none is found it uses
-// <origin>/favicon.ico. On any failure it returns all nulls and never throws.
-//
-// Port tip: make this one shared function.
+import (
+	"context"
+	"fmt"
+	"golang.org/x/net/html"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
 
-// Preview holds the scraped metadata for a URL.
 type Preview struct {
-	Title       *string
-	Description *string
-	Favicon     *string
-	OgImage     *string
-	OgTitle     *string
-	OgDescription *string
+	Title         *string `json:"title"`
+	Description   *string `json:"description"`
+	Favicon       *string `json:"favicon"`
+	OgImage       *string `json:"ogImage"`
+	OgTitle       *string `json:"ogTitle"`
+	OgDescription *string `json:"ogDescription"`
 }
 
-// FetchPreview returns the preview for url. Never returns an error; on failure
-// all fields are nil.
-func FetchPreview(url string) Preview { return Preview{} }
+// DNS is resolved and checked on each connection, including redirects, so
+// URL previews cannot reach another user's internal service or Docker DB.
+func publicDial(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, e := net.SplitHostPort(address)
+	if e != nil {
+		return nil, e
+	}
+	ips, e := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if e != nil {
+		return nil, e
+	}
+	for _, a := range ips {
+		if !a.IP.IsGlobalUnicast() || a.IP.IsPrivate() || a.IP.IsLoopback() || a.IP.IsLinkLocalUnicast() {
+			return nil, fmt.Errorf("private preview address")
+		}
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("unresolved preview address")
+	}
+	return (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+}
+func FetchPreview(raw string) Preview {
+	u, e := url.Parse(raw)
+	if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
+		return Preview{}
+	}
+	client := http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{DialContext: publicDial}, CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if len(via) > 5 {
+			return fmt.Errorf("too many redirects")
+		}
+		if r.URL.Scheme != "http" && r.URL.Scheme != "https" {
+			return fmt.Errorf("invalid scheme")
+		}
+		return nil
+	}}
+	req, e := http.NewRequest("GET", raw, nil)
+	if e != nil {
+		return Preview{}
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; computer/1.0)")
+	resp, e := client.Do(req)
+	if e != nil {
+		return Preview{}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return Preview{}
+	}
+	return ParseHTML(io.LimitReader(resp.Body, 1<<20), u)
+}
+func ParseHTML(r io.Reader, base *url.URL) Preview {
+	out := Preview{}
+	z := html.NewTokenizer(r)
+	var title strings.Builder
+	inTitle := false
+	absolute := func(s string) *string {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return nil
+		}
+		u, e := base.Parse(s)
+		if e != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return nil
+		}
+		s = u.String()
+		return &s
+	}
+	for {
+		t := z.Next()
+		if t == html.ErrorToken {
+			break
+		}
+		tok := z.Token()
+		if t == html.TextToken && inTitle {
+			title.WriteString(tok.Data)
+		}
+		if t == html.EndTagToken && tok.Data == "title" {
+			inTitle = false
+		}
+		if t != html.StartTagToken && t != html.SelfClosingTagToken {
+			continue
+		}
+		if tok.Data == "title" {
+			inTitle = true
+		}
+		attrs := map[string]string{}
+		for _, a := range tok.Attr {
+			attrs[a.Key] = a.Val
+		}
+		if tok.Data == "meta" {
+			key := strings.ToLower(attrs["property"])
+			if key == "" {
+				key = strings.ToLower(attrs["name"])
+			}
+			v := strings.TrimSpace(attrs["content"])
+			if v != "" {
+				switch key {
+				case "og:title":
+					if out.OgTitle == nil {
+						out.OgTitle = &v
+					}
+				case "og:description":
+					if out.OgDescription == nil {
+						out.OgDescription = &v
+					}
+				case "description":
+					if out.Description == nil {
+						out.Description = &v
+					}
+				case "og:image":
+					if out.OgImage == nil {
+						out.OgImage = absolute(v)
+					}
+				}
+			}
+		}
+		if tok.Data == "link" && strings.Contains(strings.ToLower(attrs["rel"]), "icon") && out.Favicon == nil {
+			out.Favicon = absolute(attrs["href"])
+		}
+	}
+	if out.OgTitle != nil {
+		out.Title = out.OgTitle
+	} else if s := strings.TrimSpace(title.String()); s != "" {
+		out.Title = &s
+	}
+	if out.OgDescription != nil {
+		out.Description = out.OgDescription
+	}
+	if out.Favicon == nil {
+		s := base.Scheme + "://" + base.Host + "/favicon.ico"
+		out.Favicon = &s
+	}
+	return out
+}

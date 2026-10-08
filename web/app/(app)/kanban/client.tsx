@@ -40,7 +40,7 @@ export function KanbanClient() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])
 
   const moveToColumn = useCallback(async (bookmarkId: string, columnId: string) => {
     setBookmarks(prev => prev.map(b => b.id === bookmarkId ? ({ ...b, kanbanColumnId: columnId } as any) : b))

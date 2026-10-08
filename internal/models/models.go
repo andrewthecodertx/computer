@@ -4,11 +4,11 @@ package models
 type KanbanStatus string
 
 const (
-	Inbox       KanbanStatus = "INBOX"
-	Todo        KanbanStatus = "TODO"
-	InProgress  KanbanStatus = "IN_PROGRESS"
-	Done        KanbanStatus = "DONE"
-	Archived    KanbanStatus = "ARCHIVED"
+	Inbox      KanbanStatus = "INBOX"
+	Todo       KanbanStatus = "TODO"
+	InProgress KanbanStatus = "IN_PROGRESS"
+	Done       KanbanStatus = "DONE"
+	Archived   KanbanStatus = "ARCHIVED"
 )
 
 // User. Porting guide 2.2.
@@ -28,43 +28,43 @@ type User struct {
 // Session and VerificationToken are unused (sessions are JWT-based).
 // Account is only needed if keeping OIDC.
 type Account struct {
-	ID               string
-	UserID           string
-	Type             string
-	Provider         string
+	ID                string
+	UserID            string
+	Type              string
+	Provider          string
 	ProviderAccountID string
-	RefreshToken     *string
-	AccessToken      *string
-	ExpiresAt        *int
-	TokenType        *string
-	Scope            *string
-	IDToken          *string
-	SessionState     *string
+	RefreshToken      *string
+	AccessToken       *string
+	ExpiresAt         *int
+	TokenType         *string
+	Scope             *string
+	IDToken           *string
+	SessionState      *string
 }
 
 // Bookmark is the core object: one saved URL. Porting guide 2.4.
 type Bookmark struct {
-	ID                string
-	URL               string
-	Title             *string
-	Description       *string
-	Favicon           *string
-	OgImage           *string
-	OgTitle           *string
-	OgDescription     *string
-	Notes             *string
-	DueDate           *string
-	AlertAt           *string
-	AlertSent         bool
-	KanbanStatus      KanbanStatus
-	KanbanColumnID    *string
-	ImapWatchEnabled  bool
-	ImapQuery         *string
-	IsPublic          bool
-	OwnerID           string
-	ContactID         *string
-	CreatedAt         string
-	UpdatedAt         string
+	ID               string
+	URL              string
+	Title            *string
+	Description      *string
+	Favicon          *string
+	OgImage          *string
+	OgTitle          *string
+	OgDescription    *string
+	Notes            *string
+	DueDate          *string
+	AlertAt          *string
+	AlertSent        bool
+	KanbanStatus     KanbanStatus
+	KanbanColumnID   *string
+	ImapWatchEnabled bool
+	ImapQuery        *string
+	IsPublic         bool
+	OwnerID          string
+	ContactID        *string
+	CreatedAt        string
+	UpdatedAt        string
 }
 
 // Tag. Porting guide 2.5.
@@ -170,18 +170,18 @@ type SignalSource struct {
 
 // Signal, one outside event about a bookmark. Porting guide 2.15.
 type Signal struct {
-	ID          string
-	SourceType  string
-	Title       string
-	Summary     *string
-	URL         *string
-	ExternalID  *string
-	OccurredAt  string
-	Read        bool
-	SourceID    *string
-	BookmarkID  string
-	OwnerID     string
-	CreatedAt   string
+	ID         string
+	SourceType string
+	Title      string
+	Summary    *string
+	URL        *string
+	ExternalID *string
+	OccurredAt string
+	Read       bool
+	SourceID   *string
+	BookmarkID string
+	OwnerID    string
+	CreatedAt  string
 }
 
 // SharedDate. Porting guide 2.16.

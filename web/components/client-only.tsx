@@ -1,12 +1,11 @@
 'use client'
 
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useSyncExternalStore } from 'react'
+const subscribe = () => () => {}
 
 /** True only after the component has mounted on the client. Use to gate browser-only values. */
 export function useMounted(): boolean {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
-  return mounted
+  return useSyncExternalStore(subscribe, () => true, () => false)
 }
 
 /**

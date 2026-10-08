@@ -1,75 +1,46 @@
 import NextAuth from 'next-auth'
-import { PrismaAdapter } from '@auth/prisma-adapter'
 import CredentialsProvider from 'next-auth/providers/credentials'
-import { prisma } from '@/lib/prisma'
-import bcrypt from 'bcryptjs'
 import { getOidcStatus } from '@/lib/oidc-config'
 
-// Authelia OIDC is STUBBED until real credentials are set (see docs/AUTHELIA.md).
-const oidcEnabled = getOidcStatus().enabled
-
+// NextAuth owns the browser session and the eventual client-managed OIDC flow.
+// Password verification and data ownership live in Go, not Prisma.
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma) as any,
   trustHost: true,
+  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
   session: { strategy: 'jwt' },
-  pages: {
-    signIn: '/login',
-  },
+  pages: { signIn: '/login' },
   providers: [
-    ...(oidcEnabled ? [{
-      id: 'authelia',
-      name: 'Authelia',
-      type: 'oidc',
+    ...(getOidcStatus().enabled ? [{
+      id: 'authelia', name: 'Authelia', type: 'oidc',
       issuer: process.env.OIDC_ISSUER,
       clientId: process.env.OIDC_CLIENT_ID,
       clientSecret: process.env.OIDC_CLIENT_SECRET,
-      allowDangerousEmailAccountLinking: true,
-      authorization: {
-        params: { scope: 'openid profile email' },
-      },
+      authorization: { params: { scope: 'openid profile email' } },
       profile(profile: any) {
-        return {
-          id: profile.sub,
-          name: profile.name ?? profile.preferred_username ?? profile.sub,
-          email: profile.email,
-          image: profile.picture ?? null,
-        }
+        return { id: profile.sub, name: profile.name ?? profile.preferred_username ?? profile.sub,
+          email: profile.email, image: profile.picture ?? null }
       },
     } as any] : []),
     CredentialsProvider({
-      id: 'credentials',
-      name: 'Email',
-      credentials: {
-        email: { label: 'Email', type: 'email' },
-        password: { label: 'Password', type: 'password' },
-      },
-      async authorize(credentials: any) {
-        if (!credentials?.email || !credentials?.password) return null
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email as string },
+      credentials: { email: { label: 'Email', type: 'email' }, password: { label: 'Password', type: 'password' } },
+      async authorize(credentials) {
+        const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8080'}/api/auth/login`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+          body: JSON.stringify({ email: credentials.email, password: credentials.password }),
         })
-        if (!user || !(user as any).password) return null
-        const valid = await bcrypt.compare(credentials.password as string, (user as any).password as string)
-        if (!valid) return null
-        return { id: user.id, name: user.name, email: user.email, image: user.image }
+        if (!response.ok) return null
+        return (await response.json()).user
       },
     }),
   ],
   callbacks: {
-    async jwt({ token, user, account }: any) {
-      if (user) {
-        token.id = user.id
-      }
-      if (account) {
-        token.provider = account.provider
-      }
-      return token
+    async signIn({ account }) {
+      // Client integration point: exchange a verified Authelia identity for a
+      // local Go User/Account before enabling OIDC. No subject is trusted as a
+      // database user ID; the backend exchange stays an explicit 501 stub.
+      return account?.provider !== 'authelia'
     },
-    async session({ session, token }: any) {
-      if (session?.user) {
-        session.user.id = token.id as string
-      }
-      return session
-    },
+    async jwt({ token, user }) { if (user) token.id = user.id; return token },
+    async session({ session, token }) { if (session.user) session.user.id = token.id as string; return session },
   },
 })

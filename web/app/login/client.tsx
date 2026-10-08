@@ -10,6 +10,9 @@ import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
 export function LoginClient({ oidcEnabled }: { oidcEnabled: boolean }) {
+  // Client-owned integration point. Keep disabled until verified Authelia
+  // identities are mapped to Go users in auth.ts's sign-in callback.
+  const oidcReady = false
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -46,14 +49,14 @@ export function LoginClient({ oidcEnabled }: { oidcEnabled: boolean }) {
             className="w-full gap-2"
             size="lg"
             variant="default"
-            disabled={!oidcEnabled}
+            disabled={!oidcEnabled || !oidcReady}
           >
             <Shield className="h-5 w-5" />
             Sign in with Authelia
           </Button>
-          {!oidcEnabled && (
+          {(!oidcEnabled || !oidcReady) && (
             <p className="text-center text-xs text-muted-foreground -mt-2">
-              Authelia single sign-on is not connected yet. Use email below.
+              Authelia single sign-on awaits client integration. Use email below.
             </p>
           )}
 

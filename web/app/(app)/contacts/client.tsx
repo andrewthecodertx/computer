@@ -37,8 +37,9 @@ export function ContactsClient() {
     if (res.ok) setBookmarks(await res.json())
   }, [])
 
-  useEffect(() => { loadContacts() }, [loadContacts])
-  useEffect(() => { if (selectedContact) loadBookmarks(selectedContact) }, [selectedContact, loadBookmarks])
+  useEffect(() => { const timer = setTimeout(loadContacts, 0); return () => clearTimeout(timer) }, [loadContacts])
+  useEffect(() => { const timer = setTimeout(() => { if (selectedContact) loadBookmarks(selectedContact) }, 0); return () => clearTimeout(timer) }, [selectedContact, loadBookmarks])
+  useEffect(() => { const reload = () => { loadContacts(); if (selectedContact) loadBookmarks(selectedContact) }; window.addEventListener('computer:bookmarks-changed', reload); return () => window.removeEventListener('computer:bookmarks-changed', reload) }, [loadContacts, loadBookmarks, selectedContact])
 
   const syncContacts = async () => {
     setSyncing(true)

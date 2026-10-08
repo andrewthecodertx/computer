@@ -5,3 +5,10 @@ web/node_modules/
 
 # Local env
 web/.env
+.env
+.env.*
+!.env.example
+web/.env.*
+!web/.env.example
+web/*.tsbuildinfo
+scripts/node_modules/

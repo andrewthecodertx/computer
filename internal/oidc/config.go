@@ -28,7 +28,7 @@ var placeholderPatterns = []*regexp.Regexp{
 }
 
 func isRealValue(value string) bool {
-	v := strings.TrimSpace(value)
+	v := strings.ToLower(strings.TrimSpace(value))
 	if v == "" {
 		return false
 	}

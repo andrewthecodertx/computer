@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"time"
@@ -26,6 +27,15 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := database.PingContext(ctx); err != nil {
+			handlers.WriteJSON(w, 503, handlers.Error{Error: "Database unavailable"})
+			return
+		}
+		handlers.WriteJSON(w, 200, map[string]string{"status": "ready"})
 	})
 
 	// 4.1 Auth and account
@@ -53,14 +63,16 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux.HandleFunc("PUT /api/bookmarks/{id}", authed(handlers.HandleBookmarksUpdate))
 	mux.HandleFunc("DELETE /api/bookmarks/{id}", authed(handlers.HandleBookmarksDelete))
 	mux.HandleFunc("POST /api/bookmarks/{id}/share", authed(handlers.HandleBookmarksShare))
+	mux.HandleFunc("DELETE /api/bookmarks/{id}/share/{userId}", authed(handlers.HandleBookmarkUnshare))
 	mux.HandleFunc("GET /api/bookmarks/{id}/markdown", authed(handlers.HandleBookmarksMarkdown))
-	mux.HandleFunc("GET /api/preview", handlers.HandlePreview)
+	mux.HandleFunc("GET /api/preview", authed(handlers.HandlePreview))
 
 	// 4.4 Tags
 	mux.HandleFunc("GET /api/tags", authed(handlers.HandleTagsList))
 	mux.HandleFunc("POST /api/tags", authed(handlers.HandleTagsCreate))
 	mux.HandleFunc("PUT /api/tags/{id}", authed(handlers.HandleTagsUpdate))
 	mux.HandleFunc("DELETE /api/tags/{id}", authed(handlers.HandleTagsDelete))
+	mux.HandleFunc("DELETE /api/tags/{id}/share/{userId}", authed(handlers.HandleTagUnshare))
 
 	// 4.5 Kanban columns
 	mux.HandleFunc("GET /api/kanban/columns", authed(handlers.HandleKanbanColumnsList))
@@ -95,16 +107,18 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux.HandleFunc("GET /api/imap/check", authed(handlers.HandleImapCheck))
 	mux.HandleFunc("GET /api/shared-dates", authed(handlers.HandleSharedDatesList))
 	mux.HandleFunc("POST /api/shared-dates", authed(handlers.HandleSharedDatesCreate))
+	mux.HandleFunc("DELETE /api/shared-dates/{id}", authed(handlers.HandleSharedDateDelete))
 	mux.HandleFunc("GET /api/users/search", authed(handlers.HandleUsersSearch))
 
 	// 4.9 Public page (no login)
 	mux.HandleFunc("GET /share/bookmark/{id}", handlers.HandlePublicBookmark)
+	mux.HandleFunc("GET /api/public/bookmarks/{id}", handlers.HandlePublicBookmark)
 
 	return &http.Server{
 		Handler:      withDB(database, mux),
 		Addr:         ":" + port(),
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 }

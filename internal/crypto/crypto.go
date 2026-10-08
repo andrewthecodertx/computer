@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 )
 
 // Encryption of IMAP passwords. Porting guide 3.5.
@@ -20,9 +21,9 @@ import (
 // Changing the secret makes saved IMAP passwords unreadable.
 
 const (
-	algorithm  = "aes-256-gcm"
-	ivLength   = 12
-	tagLength  = 16
+	algorithm = "aes-256-gcm"
+	ivLength  = 12
+	tagLength = 16
 )
 
 // Key derives the 32-byte AES key from the secret.
@@ -35,6 +36,9 @@ func Key(secret string) []byte {
 // Encrypt returns base64(IV || tag || ciphertext). Never returns an error path
 // that loses data; the caller must ensure the secret is set.
 func Encrypt(text, secret string) (string, error) {
+	if secret == "" {
+		return "", errors.New("missing encryption secret")
+	}
 	key := Key(secret)
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -61,6 +65,9 @@ func Encrypt(text, secret string) (string, error) {
 
 // Decrypt reverses Encrypt. Returns an error on malformed input.
 func Decrypt(data, secret string) (string, error) {
+	if secret == "" {
+		return "", errors.New("missing encryption secret")
+	}
 	key := Key(secret)
 	raw, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {

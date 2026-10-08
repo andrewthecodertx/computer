@@ -100,13 +100,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [])
 
   const refreshPage = useCallback(() => {
+    window.dispatchEvent(new Event('computer:bookmarks-changed'))
     router.refresh()
   }, [router])
 
   const onSearch = useCallback((q: string) => {
     setSearchQuery(q)
+    window.dispatchEvent(new CustomEvent('computer:search', { detail: q }))
     if (pathname !== '/dashboard') {
-      router.push('/dashboard')
+          router.push(`/dashboard?search=${encodeURIComponent(q)}`)
     }
   }, [pathname, router])
 
@@ -137,23 +139,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         />
         <main className="flex-1 overflow-auto p-6">
-          {typeof children === 'object' && children !== null
-            ? (() => {
-                const child = children as React.ReactElement<any>
-                // Clone children to pass props
-                try {
-                  const { cloneElement } = require('react')
-                  return cloneElement(child, {
-                    searchQuery,
-                    onSelectBookmark: setSelectedBookmark,
-                    onRefresh: refreshPage,
-                    onAddBookmark: () => setAddDialogOpen(true),
-                  })
-                } catch {
-                  return children
-                }
-              })()
-            : children}
+          {children}
         </main>
       </div>
       <BookmarkDetailSheet

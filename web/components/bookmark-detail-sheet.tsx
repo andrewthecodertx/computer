@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import type { Bookmark } from '@/components/app-shell'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { BookmarkExtras } from '@/components/bookmark-extras'
 
 interface Props {
   bookmark: Bookmark | null
@@ -30,9 +31,25 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
   const [shareSearch, setShareSearch] = useState('')
   const [shareResults, setShareResults] = useState<any[]>([])
   const [saving, setSaving] = useState(false)
+  const [effectiveId, setEffectiveId] = useState<string | null>(null)
+  const [columns, setColumns] = useState<any[]>([])
+  const [contacts, setContacts] = useState<any[]>([])
+  const [columnId, setColumnId] = useState('')
+  const [contactId, setContactId] = useState('')
+  const [title, setTitle] = useState('')
+  const canEdit = !!bookmark && effectiveId === bookmark.ownerId
+  useEffect(() => {
+    if (!bookmark) return
+    Promise.all([fetch('/api/me'), fetch('/api/kanban/columns'), fetch('/api/contacts')]).then(async ([me, cols, people]) => {
+      if (me.ok) setEffectiveId((await me.json()).effectiveUser.id)
+      if (cols.ok) setColumns(await cols.json())
+      if (people.ok) setContacts(await people.json())
+    }).catch(() => toast.error('Could not load bookmark options'))
+  }, [bookmark])
 
   useEffect(() => {
     if (bookmark) {
+      const timer = setTimeout(() => {
       setNotes(bookmark?.notes ?? '')
       setKanban(bookmark?.kanbanStatus ?? 'INBOX')
       setDueDate(bookmark?.dueDate ? new Date(bookmark.dueDate).toISOString().split('T')[0] : '')
@@ -41,6 +58,11 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
       setImapEnabled(bookmark?.imapWatchEnabled ?? false)
       setImapQuery(bookmark?.imapQuery ?? '')
       setEditing(false)
+      setColumnId(bookmark.kanbanColumnId || '')
+      setContactId(bookmark.contactId || '')
+      setTitle(bookmark.title || '')
+      }, 0)
+      return () => clearTimeout(timer)
     }
   }, [bookmark])
 
@@ -53,6 +75,9 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           notes,
+          title,
+          kanbanColumnId: columnId || null,
+          contactId: contactId || null,
           kanbanStatus: kanban,
           dueDate: dueDate || null,
           alertAt: alertAt || null,
@@ -70,11 +95,12 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
       }
     } catch { toast.error('Error saving') }
     setSaving(false)
-  }, [bookmark, notes, kanban, dueDate, alertAt, isPublic, imapEnabled, imapQuery, onUpdate])
+  }, [bookmark, notes, title, columnId, contactId, kanban, dueDate, alertAt, isPublic, imapEnabled, imapQuery, onUpdate])
 
   const handleDelete = useCallback(async () => {
     if (!bookmark || !confirm('Delete this bookmark?')) return
-    await fetch(`/api/bookmarks/${bookmark.id}`, { method: 'DELETE' })
+    const response = await fetch(`/api/bookmarks/${bookmark.id}`, { method: 'DELETE' })
+    if (!response.ok) { toast.error('Could not delete bookmark'); return }
     toast.success('Bookmark deleted')
     onClose()
     onUpdate()
@@ -91,11 +117,12 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
 
   const shareWith = useCallback(async (userId: string) => {
     if (!bookmark) return
-    await fetch(`/api/bookmarks/${bookmark.id}/share`, {
+    const response = await fetch(`/api/bookmarks/${bookmark.id}/share`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userIds: [userId] }),
     })
+    if (!response.ok) { toast.error('Could not share bookmark'); return }
     toast.success('Shared!')
     setShareSearch('')
     setShareResults([])
@@ -104,11 +131,12 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
 
   const togglePublic = useCallback(async () => {
     if (!bookmark) return
-    await fetch(`/api/bookmarks/${bookmark.id}/share`, {
+    const response = await fetch(`/api/bookmarks/${bookmark.id}/share`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ isPublic: !isPublic }),
     })
+    if (!response.ok) { toast.error('Could not change public access'); return }
     setIsPublic(!isPublic)
     toast.success(isPublic ? 'Made private' : 'Made public')
     onUpdate()
@@ -166,10 +194,11 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
           </div>
 
           {/* Notes */}
+          {canEdit && <div className="space-y-2"><label className="text-xs font-medium">Title</label><Input value={title} onChange={e => setTitle(e.target.value)} /></div>}
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <p className="text-xs font-medium text-muted-foreground">Notes</p>
-              <Button variant="ghost" size="xs" onClick={() => setEditing(!editing)}>
+              <Button disabled={!canEdit} variant="ghost" size="xs" onClick={() => setEditing(!editing)}>
                 {editing ? <X className="h-3 w-3" /> : <Edit className="h-3 w-3" />}
               </Button>
             </div>
@@ -183,6 +212,11 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
           </div>
 
           {/* Kanban Status */}
+          <fieldset disabled={!canEdit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs font-medium">Column<select className="mt-1 w-full rounded border bg-background p-2" value={columnId} onChange={e => setColumnId(e.target.value)}><option value="">Use legacy status</option>{columns.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
+            <label className="text-xs font-medium">Contact<select className="mt-1 w-full rounded border bg-background p-2" value={contactId} onChange={e => setContactId(e.target.value)}><option value="">No contact</option>{contacts.map(c => <option key={c.id} value={c.id}>{c.displayName}</option>)}</select></label>
+          </div>
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-1.5">Status</p>
             <div className="flex gap-1.5">
@@ -267,6 +301,10 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
           </div>
 
           {/* Actions */}
+          </fieldset>
+          {bookmark && <BookmarkExtras bookmark={bookmark} canEdit={canEdit} onUpdate={onUpdate} />}
+          {!canEdit && <p className="text-xs text-muted-foreground">Shared bookmark — read only</p>}
+          {canEdit &&
           <div className="flex items-center gap-2 pt-2 border-t">
             <Button onClick={handleSave} loading={saving} className="flex-1 gap-1.5">
               <Save className="h-4 w-4" /> Save Changes
@@ -274,7 +312,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
             <Button variant="destructive" size="icon" onClick={handleDelete}>
               <Trash2 className="h-4 w-4" />
             </Button>
-          </div>
+          </div>}
         </div>
       </SheetContent>
     </Sheet>

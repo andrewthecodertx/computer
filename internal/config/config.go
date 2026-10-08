@@ -31,7 +31,7 @@ type Config struct {
 // Load reads configuration from the environment. Placeholders keep OIDC off.
 func Load() *Config {
 	return &Config{
-		DatabaseURL:      os.Getenv("DATABASE_URL"),
+		DatabaseURL:      DBURL(),
 		NextAuthSecret:   os.Getenv("NEXTAUTH_SECRET"),
 		AuthSecret:       os.Getenv("AUTH_SECRET"),
 		NextAuthURL:      os.Getenv("NEXTAUTH_URL"),

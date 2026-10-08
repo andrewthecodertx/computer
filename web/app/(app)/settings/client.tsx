@@ -163,7 +163,7 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
               {oidc.enabled ? <Check className="h-4 w-4 mt-0.5 shrink-0" /> : <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />}
               <span>
                 {oidc.enabled
-                  ? <>Connected to <span className="font-mono break-all">{oidc.issuer}</span></>
+                  ? <>Configured for <span className="font-mono break-all">{oidc.issuer}</span>. Client integration is still pending.</>
                   : <>Not connected. Authelia sign-in is disabled until all three variables below hold real values. Users can sign in with email and password meanwhile. Setup guide: <span className="font-mono">docs/AUTHELIA.md</span></>}
               </span>
             </div>

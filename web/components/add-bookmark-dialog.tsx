@@ -31,7 +31,8 @@ export function AddBookmarkDialog({ open, onClose, onCreated }: Props) {
   useEffect(() => {
     if (open) {
       fetch('/api/tags').then(r => r.json()).then(setAllTags).catch(() => {})
-      setUrl(''); setTitle(''); setDescription(''); setNotes(''); setDueDate(''); setKanban('INBOX'); setTags([])
+      const timer = setTimeout(() => { setUrl(''); setTitle(''); setDescription(''); setNotes(''); setDueDate(''); setKanban('INBOX'); setTags([]) }, 0)
+      return () => clearTimeout(timer)
     }
   }, [open])
 

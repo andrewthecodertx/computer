@@ -2,10 +2,8 @@
 -- Derived from computer_porting_guide.md section 2 and prisma/schema.prisma.
 -- IDs are text (CUID/UUID). CASCADE / SetNull per the guide.
 
-DROP DATABASE IF EXISTS computer;
-CREATE DATABASE computer OWNER linkos;
-
-\c computer
+-- Run against an EMPTY database. Never drops or recreates a database.
+BEGIN;
 
 -- 2.1 legacy enum
 CREATE TYPE "KanbanStatus" AS ENUM ('INBOX','TODO','IN_PROGRESS','DONE','ARCHIVED');
@@ -18,7 +16,7 @@ CREATE TABLE "User" (
   "emailVerified" timestamptz,
   image text,
   password text,
-  role text DEFAULT 'USER',
+  role text NOT NULL DEFAULT 'USER' CHECK (role IN ('USER','ADMIN')),
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
@@ -27,9 +25,9 @@ CREATE TABLE "User" (
 CREATE TABLE "Account" (
   id text PRIMARY KEY,
   "userId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
-  type text,
-  provider text,
-  "providerAccountId" text,
+  type text NOT NULL,
+  provider text NOT NULL,
+  "providerAccountId" text NOT NULL,
   "refresh_token" text,
   "access_token" text,
   "expires_at" int,
@@ -43,16 +41,16 @@ CREATE INDEX "Account_userId_idx" ON "Account"("userId");
 
 CREATE TABLE "Session" (
   id text PRIMARY KEY,
-  "sessionToken" text UNIQUE,
+  "sessionToken" text NOT NULL UNIQUE,
   "userId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
-  expires timestamptz
+  expires timestamptz NOT NULL
 );
 CREATE INDEX "Session_userId_idx" ON "Session"("userId");
 
 CREATE TABLE "VerificationToken" (
-  identifier text,
-  token text UNIQUE,
-  expires timestamptz,
+  identifier text NOT NULL,
+  token text NOT NULL UNIQUE,
+  expires timestamptz NOT NULL,
   UNIQUE(identifier, token)
 );
 
@@ -90,8 +88,8 @@ CREATE INDEX "Bookmark_alertAt_idx" ON "Bookmark"("alertAt");
 -- 2.5 Tag
 CREATE TABLE "Tag" (
   id text PRIMARY KEY,
-  name text,
-  color text DEFAULT '#6366f1',
+  name text NOT NULL,
+  color text NOT NULL DEFAULT '#6366f1',
   "ownerId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now(),
@@ -139,6 +137,8 @@ CREATE TABLE "Contact" (
   UNIQUE(uid, "userId")
 );
 CREATE INDEX "Contact_userId_idx" ON "Contact"("userId");
+ALTER TABLE "Bookmark" ADD CONSTRAINT "Bookmark_contactId_fkey"
+  FOREIGN KEY ("contactId") REFERENCES "Contact"(id) ON DELETE SET NULL;
 
 -- 2.10 ImapConfig
 CREATE TABLE "ImapConfig" (
@@ -241,3 +241,4 @@ CREATE TABLE "SharedDate" (
 CREATE INDEX "SharedDate_recipientId_idx" ON "SharedDate"("recipientId");
 CREATE INDEX "SharedDate_creatorId_idx" ON "SharedDate"("creatorId");
 CREATE INDEX "SharedDate_date_idx" ON "SharedDate"(date);
+COMMIT;

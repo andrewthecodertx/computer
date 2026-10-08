@@ -1,38 +1,49 @@
 package kanban
 
-// Porting guide 3.3.
+import (
+	"context"
+	"database/sql"
+	"github.com/andrew/go-computer/internal/db"
+)
 
-// DEFAULT_COLUMNS is the default set, ordered by position 0-3.
-var DEFAULT_COLUMNS = []DefaultColumn{
-	{Label: "Inbox",      Color: "#64748b", Key: "INBOX"},
-	{Label: "To Do",      Color: "#3b82f6", Key: "TODO"},
-	{Label: "In Progress", Color: "#f59e0b", Key: "IN_PROGRESS"},
-	{Label: "Done",       Color: "#22c55e", Key: "DONE"},
+var DefaultColumns = []struct{ Label, Color, Key string }{{"Inbox", "#64748b", "INBOX"}, {"To Do", "#3b82f6", "TODO"}, {"In Progress", "#f59e0b", "IN_PROGRESS"}, {"Done", "#22c55e", "DONE"}}
+
+func GetColumns(ctx context.Context, d *db.DB, userID string) ([]db.Object, error) {
+	err := db.Transaction(ctx, d, func(tx *sql.Tx) error {
+		if _, e := tx.ExecContext(ctx, `SELECT id FROM "User" WHERE id=$1 FOR UPDATE`, userID); e != nil {
+			return e
+		}
+		var n int
+		if e := tx.QueryRowContext(ctx, `SELECT count(*) FROM "KanbanColumn" WHERE "userId"=$1`, userID).Scan(&n); e != nil {
+			return e
+		}
+		if n == 0 {
+			for i, c := range DefaultColumns {
+				if _, e := db.Insert(ctx, tx, "KanbanColumn", db.Object{"id": db.NewID(), "userId": userID, "position": i, "label": c.Label, "color": c.Color, "key": c.Key}); e != nil {
+					return e
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return db.Many(ctx, d, `SELECT to_jsonb(c) FROM "KanbanColumn" c WHERE "userId"=$1 ORDER BY position,id`, userID)
 }
-
-// DefaultColumn is one of the four default columns.
-type DefaultColumn struct {
-	Label string
-	Color string
-	Key   string // INBOX/TODO/IN_PROGRESS/DONE
+func ResolveColumnID(b db.Object, columns []db.Object) string {
+	for _, c := range columns {
+		if b["kanbanColumnId"] == c["id"] {
+			return c["id"].(string)
+		}
+	}
+	for _, c := range columns {
+		if c["key"] != nil && c["key"] == b["kanbanStatus"] {
+			return c["id"].(string)
+		}
+	}
+	if len(columns) > 0 {
+		return columns[0]["id"].(string)
+	}
+	return ""
 }
-
-// Column is a user's kanban column.
-type Column struct {
-	ID        string
-	Label     string
-	Color     string
-	Position  int
-	Key       *string
-	UserID    string
-	CreatedAt string
-}
-
-// GetColumns returns columns ordered by position. If the user has none, it
-// creates the four defaults (positions 0-3) first.
-func GetColumns(userId string) ([]Column, error) { return nil, nil }
-
-// ResolveColumnId is a pure function: if bookmark.kanbanColumnId exists among
-// columns, return it; else the column whose key == bookmark.kanbanStatus;
-// else the first column; else null.
-func ResolveColumnID(kanbanColumnID *string, status string, columns []Column) *string { return nil }

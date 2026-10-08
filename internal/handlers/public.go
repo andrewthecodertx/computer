@@ -1,17 +1,17 @@
 package handlers
 
-import (
-	"net/http"
-)
+import "net/http"
 
-// HandlePublicBookmark implements GET /share/bookmark/:id (4.9).
-// No login required. Shows a read-only page for a bookmark where isPublic =
-// true; otherwise not found.
 func HandlePublicBookmark(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
+	v, e := bookmark(r, r.PathValue("id"), true)
+	if e == nil {
+		delete(v, "sharedWith")
+		delete(v, "contact")
+		delete(v, "pageLinks")
+		if owner, ok := v["owner"].(map[string]any); ok {
+			delete(owner, "email")
+			delete(owner, "image")
+		}
 	}
-	// TODO: look up bookmark by id, 404 if !isPublic, return the public view.
-	writeJSON(w, http.StatusOK, map[string]interface{}{})
+	respond(w, 200, v, e)
 }

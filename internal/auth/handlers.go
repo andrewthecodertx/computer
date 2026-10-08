@@ -1,190 +1,131 @@
 package auth
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"strings"
-	"time"
-
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
-	"github.com/andrew/go-computer/internal/handlers"
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"net/http"
+	"net/mail"
+	"strings"
 )
 
-// bcryptCost mirrors the original app: bcrypt cost 12 (porting guide 3.1).
 const bcryptCost = 12
 
-// HandleSignup implements POST /api/signup (4.1).
-// 400 if missing; 409 if email exists; bcrypt(12); name defaults to the part of
-// the email before @; role ADMIN if no admin exists yet (ignoring @example.com
-// test users). Returns 201 {ok, userId}.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+func failure(w http.ResponseWriter, status int, s string) {
+	writeJSON(w, status, map[string]string{"error": s})
+}
+func decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if json.NewDecoder(r.Body).Decode(v) != nil {
+		failure(w, 400, "Invalid JSON")
+		return false
+	}
+	return true
+}
 func HandleSignup(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		handlers.WriteJSON(w, http.StatusMethodNotAllowed, handlers.BadRequest("method not allowed"))
-		return
-	}
 	var req SignupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.WriteJSON(w, http.StatusBadRequest, handlers.BadRequest("invalid json"))
+	if !decode(w, r, &req) {
 		return
 	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" || req.Password == "" {
-		handlers.WriteJSON(w, http.StatusBadRequest, handlers.BadRequest("Email and password are required"))
+		failure(w, 400, "Email and password are required")
 		return
 	}
-	if !strings.Contains(req.Email, "@") {
-		handlers.WriteJSON(w, http.StatusBadRequest, handlers.BadRequest("Invalid email"))
+	if a, e := mail.ParseAddress(req.Email); e != nil || a.Address != req.Email {
+		failure(w, 400, "Invalid email")
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	repo := db.NewUserRepo(dbFromRequest(r))
-	if _, err := repo.FindByEmail(ctx, req.Email); err == nil {
-		handlers.WriteJSON(w, http.StatusConflict, handlers.Conflict("User already exists"))
-		return
-	} else if !errors.Is(err, db.ErrNotFound) {
-		handlers.WriteJSON(w, http.StatusInternalServerError, handlers.BadRequest("server error"))
+	if len(req.Password) > 72 {
+		failure(w, 400, "Password must be at most 72 bytes")
 		return
 	}
-
-	hashed, err := bcryptHash(req.Password)
-	if err != nil {
-		handlers.WriteJSON(w, http.StatusInternalServerError, handlers.BadRequest("server error"))
+	repo := db.NewUserRepo(db.FromContext(r.Context()))
+	if _, e := repo.FindByEmail(r.Context(), req.Email); e == nil {
+		failure(w, 409, "User already exists")
+		return
+	} else if !errors.Is(e, db.ErrNotFound) {
+		failure(w, 500, "Database unavailable")
 		return
 	}
-
-	name := req.Name
-	if name == "" {
-		name = strings.SplitN(req.Email, "@", 2)[0]
+	hash, e := bcryptHashImpl(req.Password)
+	if e != nil {
+		failure(w, 500, "Unable to hash password")
+		return
 	}
-
+	if req.Name == "" {
+		req.Name = strings.SplitN(req.Email, "@", 2)[0]
+	}
 	role := "USER"
-	if !strings.HasSuffix(req.Email, "@example.com") {
-		exists, err := repo.ExistsAnyNonTest(ctx)
-		if err == nil && !exists {
-			role = "ADMIN"
-		}
-	}
-
-	user := &db.NewUserInput{
-		ID:       cuid(),
-		Name:     name,
-		Email:    req.Email,
-		Password: hashed,
-		Role:     role,
-	}
-	uid, err := repo.Create(ctx, user)
-	if err != nil {
-		handlers.WriteJSON(w, http.StatusInternalServerError, handlers.BadRequest("server error"))
-		return
-	}
-
-	handlers.WriteJSON(w, http.StatusCreated, SignupResponse{OK: true, UserID: uid})
-}
-
-// HandleLogin implements POST /api/auth/login (4.1).
-// Server-side credentials sign-in; 401 on failure.
-func HandleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		handlers.WriteJSON(w, http.StatusMethodNotAllowed, handlers.BadRequest("method not allowed"))
-		return
-	}
-	var req SigninRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.WriteJSON(w, http.StatusBadRequest, handlers.BadRequest("invalid json"))
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	repo := db.NewUserRepo(dbFromRequest(r))
-	u, err := repo.FindByEmail(ctx, req.Email)
-	if err != nil || u.Password == nil || !bcryptCheck(req.Password, *u.Password) {
-		handlers.WriteJSON(w, http.StatusUnauthorized, handlers.Unauthorized("Invalid credentials"))
-		return
-	}
-
-	secret := config.Load().Secret()
-	if err := WriteSessionCookie(w, SessionUser{ID: u.ID, Role: u.Role}, secret); err != nil {
-		handlers.WriteJSON(w, http.StatusInternalServerError, handlers.BadRequest("server error"))
-		return
-	}
-	handlers.WriteJSON(w, http.StatusOK, handlers.OK{OK: true})
-}
-
-// HandleAuth proxies the auth library endpoints: GET/POST /api/auth/*
-// (csrf, callback/credentials, callback/authelia, session, signout).
-func HandleAuth(w http.ResponseWriter, r *http.Request) {
-	// TODO: route to csrf / callback / session / signout handlers.
-}
-
-// HandleMe implements GET /api/me (4.1).
-// Returns {user: realUser, isAdmin, viewingAs: {id, name, email} | null}.
-func HandleMe(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		handlers.WriteJSON(w, http.StatusMethodNotAllowed, handlers.BadRequest("method not allowed"))
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	su, ok := SessionFromContext(r.Context())
-	if !ok {
-		handlers.WriteJSON(w, http.StatusUnauthorized, handlers.Unauthorized("Unauthorized"))
-		return
-	}
-	repo := db.NewUserRepo(dbFromRequest(r))
-	u, err := repo.FindByID(ctx, su.ID)
-	if err != nil {
-		handlers.WriteJSON(w, http.StatusUnauthorized, handlers.Unauthorized("Unauthorized"))
-		return
-	}
-	// Promote via ADMIN_EMAILS on first check (porting guide 3.2).
-	role := u.Role
-	if role != "ADMIN" && u.Email != nil && db.IsAdminEmail(*u.Email) {
-		_ = repo.SetRole(ctx, u.ID, "ADMIN")
+	if config.IsAdminEmail(req.Email) {
 		role = "ADMIN"
 	}
-	out := map[string]interface{}{
-		"user": map[string]interface{}{
-			"id":    u.ID,
-			"name":  u.Name,
-			"email": u.Email,
-			"image": u.Image,
-			"role":  role,
-		},
-		"isAdmin": role == "ADMIN",
+	id, e := repo.Create(r.Context(), &db.NewUserInput{ID: db.NewID(), Name: req.Name, Email: req.Email, Password: hash, Role: role})
+	if e != nil {
+		var pg *pgconn.PgError
+		if errors.As(e, &pg) && pg.Code == "23505" {
+			failure(w, 409, "User already exists")
+		} else {
+			failure(w, 500, "Unable to create user")
+		}
+		return
 	}
-	// TODO: view-as cookie -> viewingAs: {id, name, email} | null.
-	out["viewingAs"] = nil
-	handlers.WriteJSON(w, http.StatusOK, out)
+	writeJSON(w, 201, SignupResponse{true, id})
 }
-
-// --- helpers ---
-
-// dbFromRequest pulls the *db.DB from the request context. The http.Server
-// wires the DB into the context at startup.
-func dbFromRequest(r *http.Request) *db.DB {
-	return db.FromContext(r.Context())
+func HandleLogin(w http.ResponseWriter, r *http.Request) {
+	var req SigninRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	u, e := db.NewUserRepo(db.FromContext(r.Context())).FindByEmail(r.Context(), strings.ToLower(strings.TrimSpace(req.Email)))
+	if e != nil || u.Password == nil || !bcryptCheckImpl(req.Password, *u.Password) {
+		failure(w, 401, "Invalid credentials")
+		return
+	}
+	if e = WriteSessionCookie(w, SessionUser{ID: u.ID, Role: u.Role}, config.Load().Secret()); e != nil {
+		failure(w, 500, "Session unavailable")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "user": identity(u)})
 }
-
-// --- bcrypt ---
-
-func bcryptHash(password string) (string, error) {
-	// golang.org/x/crypto/bcrypt
-	return bcryptHashImpl(password)
+func HandleAuth(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/api/auth/session":
+		su, e := ReadSession(r, config.Load().Secret())
+		if e != nil {
+			writeJSON(w, 200, nil)
+			return
+		}
+		u, e := db.NewUserRepo(db.FromContext(r.Context())).FindByID(r.Context(), su.ID)
+		if e != nil {
+			writeJSON(w, 200, nil)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"user": identity(u)})
+	case "/api/auth/signout":
+		if r.Method != "POST" {
+			failure(w, 405, "Use POST to sign out")
+			return
+		}
+		ClearSessionCookie(w)
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	default:
+		failure(w, 404, "Unknown authentication endpoint")
+	}
 }
-
-func bcryptCheck(password, hash string) bool {
-	return bcryptCheckImpl(password, hash)
+func HandleMe(w http.ResponseWriter, r *http.Request) {
+	s, _ := SessionFromContext(r.Context())
+	var viewing any
+	if s.ID != s.RealID {
+		viewing = map[string]any{"id": s.ID, "name": s.Name, "email": s.Email}
+	}
+	writeJSON(w, 200, map[string]any{"user": s.RealUser, "effectiveUser": map[string]any{"id": s.ID, "name": s.Name, "email": s.Email, "role": s.Role}, "isAdmin": s.RealRole == "ADMIN", "viewingAs": viewing})
 }
-
-var _ = jwt.SigningMethodHS256
-var _ = fmt.Sprintf

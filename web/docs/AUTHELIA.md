@@ -130,3 +130,11 @@ Then restart or redeploy. Open **Settings → OIDC** to confirm it shows **Conne
 Email/password login stays available alongside Authelia. To make Authelia the
 only method, remove the `CredentialsProvider` from `auth.ts`, the email form in
 `app/login/client.tsx`, and the `/signup` page and `/api/signup` route.
+# Go port integration note
+
+The client-owned OIDC connection remains a stub. `web/auth.ts` retains the
+provider configuration but rejects Authelia sign-in until a verified identity
+is provisioned/mapped to a local Go User/Account. Go login/callback endpoints
+return 501; `/api/auth/oidc/status` reports configuration only. Setting env
+variables alone does not complete the connection. The original setup guide
+below remains a reference for the future client integration.

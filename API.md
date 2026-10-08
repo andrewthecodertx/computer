@@ -1,112 +1,111 @@
-# API endpoints
+# API reference
 
-computer — Go backend. All routes live on `http://localhost:8080`.
+Go API: `http://localhost:8080`. The web UI uses the same paths through its
+server-side proxy at `http://localhost:3000` and its NextAuth session.
 
-> **Status:** every handler is a stub. They are wired and respond with hardcoded
-> JSON; none touch the database yet. Real behavior is the `// TODO:` in each
-> handler under `internal/handlers/`. Errors are `{error: string}`.
+Successful responses are JSON unless marked Markdown. Errors are
+`{"error":"message"}`. Data endpoints require authentication: **401** without
+a valid session, **404** for another user's private record, **403** for
+non-admin administration, **400** for invalid input, **409** for duplicates.
 
-## Health
+## Authentication
 
-| Route | Method | Stub returns |
+| Method | Path | Returns |
 |---|---|---|
-| `/healthz` | GET | `{"status":"ok"}` |
+| GET | `/healthz` | `{"status":"ok"}` (process liveness) |
+| GET | `/readyz` | `{"status":"ready"}` after database ping; 503 when unavailable |
+| POST | `/api/signup` | 201 `{ok:true,userId}`; body `{email,password,name?}` |
+| POST | `/api/auth/login` | `{ok:true,user:{id,name,email,image,role}}` and signed HttpOnly cookie |
+| GET | `/api/auth/session` | `{user}` or `null` for no valid cookie |
+| POST | `/api/auth/signout` | `{ok:true}` and expired cookie |
+| GET | `/api/me` | `{user,effectiveUser,isAdmin,viewingAs}`; real and effective identities |
+| GET | `/api/auth/oidc/status` | `{enabled,issuerSet,clientIdSet,clientSecretSet,issuer}`; never includes secrets |
+| GET | `/api/auth/oidc/login` | **501**, client-owned Authelia integration stub |
+| GET, POST | `/api/auth/callback/authelia` | **501**, client-owned callback stub |
 
-## Auth and account (4.1)
+The browser's NextAuth `/api/auth/*` endpoints remain on the Next server.
+Direct Go API consumers use the `computer_session` cookie from login.
 
-| Route | Method | Stub returns |
+## Bookmarks
+
+A bookmark includes camelCase scalar fields plus `tags:[{tag}]`, `contact`,
+`sharedWith:[{userId,user}]`, `owner`. Detail responses also include
+`pageLinks:[{pageId,page}]`, limited to the effective user's pages.
+
+| Method | Path | Returns / behavior |
 |---|---|---|
-| `/api/signup` | POST | `{"ok":true}` |
-| `/api/auth/login` | POST | `{"ok":true}` |
-| `/api/auth/*` | GET/POST | (routed, not implemented — csrf, callbacks, session, signout) |
-| `/api/me` | GET | `{}` |
+| GET | `/api/bookmarks` | Array, newest-updated first, maximum 200; query `search,tagId,contactId,kanban,date,shared` |
+| POST | `/api/bookmarks` | 201 bookmark; body `{url,title?,description?,notes?,dueDate?,alertAt?,kanbanStatus?,contactId?,tagIds?,isPublic?,imapWatchEnabled?,imapQuery?}` |
+| GET | `/api/bookmarks/{id}` | Bookmark if owned, shared, or public |
+| PUT | `/api/bookmarks/{id}` | Updated bookmark, owner only; fields above plus `kanbanColumnId`; omitted fields stay unchanged; nullable fields can be cleared |
+| DELETE | `/api/bookmarks/{id}` | `{ok:true}`, owner only |
+| POST | `/api/bookmarks/{id}/share` | `{ok:true}`; body `{userIds?,isPublic?}`; adds shares |
+| DELETE | `/api/bookmarks/{id}/share/{userId}` | `{ok:true}`; revokes that direct share |
+| GET | `/api/bookmarks/{id}/markdown` | Markdown attachment, owned/shared only |
+| GET | `/api/preview?url=...` | `{title,description,ogTitle,ogDescription,ogImage,favicon}`; nullable on fetch failure |
+| GET | `/api/public/bookmarks/{id}` | Public bookmark projection without login; private records return 404 |
 
-## Admin (4.2) — uses the real user; 403 unless ADMIN
+Public HTML pages remain at `/share/bookmark/{id}` on the Next.js server.
+Updating `alertAt` resets `alertSent`; replacing `tagIds` is transactional.
+Tags, columns and contacts are checked for accessibility/ownership.
 
-| Route | Method | Stub returns |
+## Tags, kanban and pages
+
+| Method | Path | Returns / behavior |
 |---|---|---|
-| `/api/admin/users` | GET | `[]` |
-| `/api/admin/users` | PATCH | `{"ok":true}` |
-| `/api/admin/view-as` | POST | `{"ok":true}` |
+| GET | `/api/tags` | Owned/shared tags with `_count.bookmarks` and `sharedWith` |
+| POST | `/api/tags` | 201 tag; body `{name,color?}` |
+| PUT | `/api/tags/{id}` | Updated tag; body `{name?,color?,shareUserIds?}`, owner only |
+| DELETE | `/api/tags/{id}` | `{ok:true}` |
+| DELETE | `/api/tags/{id}/share/{userId}` | `{ok:true}`, revokes tag share |
+| GET | `/api/kanban/columns` | Ordered columns; creates four defaults if none exist |
+| POST | `/api/kanban/columns` | 201 column; body `{label,color?}` |
+| PUT | `/api/kanban/columns` | Ordered columns; body `{order:[id,...]}`, complete permutation required |
+| PATCH | `/api/kanban/columns/{id}` | Updated column; body `{label?,color?}` |
+| DELETE | `/api/kanban/columns/{id}` | `{ok:true,movedTo,moved}`; moves cards, never deletes bookmarks; refuses last column |
+| GET | `/api/pages?search=...` | Pages, pinned first, with `_count.bookmarks` |
+| POST | `/api/pages` | 201 page; body `{title?,content?}` |
+| PUT | `/api/pages` | `{ok:true}`; complete `{order:[id,...]}` |
+| GET | `/api/pages/{id}` | Page plus ordered `bookmarks:[{bookmark}]` |
+| PATCH | `/api/pages/{id}` | Updated page; `{title?,content?,pinned?,icon?,addBookmarkId?,removeBookmarkId?}` |
+| DELETE | `/api/pages/{id}` | `{ok:true}`; keeps bookmarks |
+| GET | `/api/pages/{id}/markdown` | Markdown attachment |
 
-## Bookmarks (4.3)
+## Signals and integrations
 
-| Route | Method | Stub returns |
+| Method | Path | Returns / behavior |
 |---|---|---|
-| `/api/bookmarks` | GET | `[]` |
-| `/api/bookmarks` | POST | `{"ok":true}` |
-| `/api/bookmarks/{id}` | GET | `{}` |
-| `/api/bookmarks/{id}` | PUT | `{"ok":true}` |
-| `/api/bookmarks/{id}` | DELETE | `{"ok":true}` |
-| `/api/bookmarks/{id}/share` | POST | `{"ok":true}` |
-| `/api/bookmarks/{id}/markdown` | GET | (.md download stub) |
-| `/api/preview` | GET | `{}` |
+| GET | `/api/bookmarks/{id}/signals` | `{sources,signals,types}`, newest 50 events |
+| POST | `/api/bookmarks/{id}/signals` | 201 watcher for `{type:"email",config:{from?,subject?}}`; `{checked,created}` for `{action:"check"}` |
+| PATCH | `/api/signal-sources/{id}` | Updated watcher for `{enabled:boolean}` |
+| DELETE | `/api/signal-sources/{id}` | `{ok:true}` |
+| GET | `/api/alerts/check` | Undismissed bookmarks due within 15 minutes, soonest first |
+| DELETE | `/api/alerts/{bookmarkId}` | `{ok:true}`; sets `alertSent` |
+| GET | `/api/contacts` | Synced contacts with `_count.bookmarks` |
+| POST | `/api/contacts/sync` | `{synced}`; `{nextcloudUrl,username,password,cardDavPath?}` |
+| GET | `/api/settings/imap` | Configuration with masked password, or `null` |
+| POST | `/api/settings/imap` | `{ok:true}`; `{host,port?,tls?,username,password,folder?}`; empty/masked password preserves an existing password |
+| POST | `/api/imap/test` | `{ok:true}` after real connection/login; same mailbox fields |
+| GET | `/api/imap/check` | `{matches:[{bookmarkId,title,from,externalId,occurredAt}]}` for legacy watchers |
+| GET | `/api/shared-dates` | Created/received dates with `creator` and `recipient` |
+| POST | `/api/shared-dates` | 201 array of created shares for `{date,note?,recipientIds:[...]}` |
+| DELETE | `/api/shared-dates/{id}` | `{ok:true}`, creator only |
+| GET | `/api/users/search?q=...` | Safe user projections; minimum two characters, maximum ten results |
 
-## Tags (4.4)
+Email signals are deduplicated by source and Message-ID. Failed mailbox checks
+are recorded on `lastStatus` rather than reported as successful email matches.
+Sharing a tag or date exposes associated bookmarks read-only; direct-share
+revocation does not remove access independently granted by a tag/date share.
 
-| Route | Method | Stub returns |
+## Administration
+
+Always uses the real user, even while viewing another account.
+
+| Method | Path | Returns / behavior |
 |---|---|---|
-| `/api/tags` | GET | `[]` |
-| `/api/tags` | POST | `{"ok":true}` |
-| `/api/tags/{id}` | PUT | `{"ok":true}` |
-| `/api/tags/{id}` | DELETE | `{"ok":true}` |
+| GET | `/api/admin/users` | Safe user projections with bookmark/page/tag counts; excludes `@example.com` test users |
+| PATCH | `/api/admin/users` | `{ok:true}` for `{userId,role:"USER"\|"ADMIN"}`; refuses self-demotion |
+| POST | `/api/admin/view-as` | `{ok:true}`; `{userId}` sets an eight-hour HttpOnly cookie, `{userId:null}` clears it |
 
-## Kanban columns (4.5)
-
-| Route | Method | Stub returns |
-|---|---|---|
-| `/api/kanban/columns` | GET | `[]` |
-| `/api/kanban/columns` | POST | `{"ok":true}` |
-| `/api/kanban/columns` | PUT | `[]` |
-| `/api/kanban/columns/{id}` | PATCH | `{"ok":true}` |
-| `/api/kanban/columns/{id}` | DELETE | `{}` |
-
-## Pages (4.6)
-
-| Route | Method | Stub returns |
-|---|---|---|
-| `/api/pages` | GET | `[]` |
-| `/api/pages` | POST | `{"ok":true}` |
-| `/api/pages` | PUT | `{"ok":true}` |
-| `/api/pages/{id}` | GET | `{}` |
-| `/api/pages/{id}` | PATCH | `{"ok":true}` |
-| `/api/pages/{id}` | DELETE | `{"ok":true}` |
-| `/api/pages/{id}/markdown` | GET | (.md download stub) |
-
-## Signals (4.7)
-
-| Route | Method | Stub returns |
-|---|---|---|
-| `/api/bookmarks/{id}/signals` | GET | `{types: []}` |
-| `/api/bookmarks/{id}/signals` | POST | `{"ok":true}` |
-| `/api/signal-sources/{id}` | PATCH | `{"ok":true}` |
-| `/api/signal-sources/{id}` | DELETE | `{"ok":true}` |
-
-## Alerts, contacts, email, dates, users (4.8)
-
-| Route | Method | Stub returns |
-|---|---|---|
-| `/api/alerts/check` | GET | `[]` |
-| `/api/alerts/{bookmarkId}` | DELETE | `{"ok":true}` |
-| `/api/contacts` | GET | `[]` |
-| `/api/contacts/sync` | POST | `{"synced":0}` |
-| `/api/settings/imap` | GET | `{}` |
-| `/api/settings/imap` | POST | `{"ok":true}` |
-| `/api/imap/test` | POST | `{"ok":true}` |
-| `/api/imap/check` | GET | `{"matches":[]}` |
-| `/api/shared-dates` | GET | `[]` |
-| `/api/shared-dates` | POST | `{"ok":true}` |
-| `/api/users/search` | GET | `[]` |
-
-## Public page (4.9) — no login
-
-| Route | Method | Stub returns |
-|---|---|---|
-| `/share/bookmark/{id}` | GET | `{}` |
-
-## Notes
-
-- Every data endpoint resolves the effective user, returns 401 if none,
-  checks ownership, returns 404 if not theirs, then acts (porting guide 5.1).
-- The Next.js front-end calls these APIs; it is not yet wired to this backend.
-- Route registration lives in `internal/http/server.go`.
+Route registration: `internal/http/server.go`. Only the client-owned OIDC
+login/callback remain stubs; application data routes use PostgreSQL.

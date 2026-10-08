@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -50,16 +51,13 @@ func VerifySession(token, secret string) (*SessionUser, error) {
 		return nil, fmt.Errorf("auth: empty session secret")
 	}
 	tok, err := jwt.ParseWithClaims(token, &SessionClaims{}, func(t *jwt.Token) (interface{}, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method")
-		}
 		return []byte(secret), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithIssuer("computer"), jwt.WithExpirationRequired())
 	if err != nil {
 		return nil, err
 	}
 	claims, ok := tok.Claims.(*SessionClaims)
-	if !ok || !tok.Valid {
+	if !ok || !tok.Valid || claims.UserID == "" {
 		return nil, errors.New("auth: invalid token")
 	}
 	return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
@@ -67,6 +65,9 @@ func VerifySession(token, secret string) (*SessionUser, error) {
 
 // ReadSession pulls the session cookie from the request and verifies it.
 func ReadSession(r *http.Request, secret string) (*SessionUser, error) {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		return VerifySession(strings.TrimPrefix(h, "Bearer "), secret)
+	}
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return nil, err
@@ -100,6 +101,8 @@ func ClearSessionCookie(w http.ResponseWriter) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecure(),
 	})
 }
 

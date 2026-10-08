@@ -2,75 +2,70 @@ package auth
 
 import (
 	"context"
-	"net/http"
-
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
-	"github.com/andrew/go-computer/internal/handlers"
+	"github.com/andrew/go-computer/internal/models"
+	"net/http"
 )
 
-// SessionUser is the verified identity from the signed cookie.
+const ViewAsCookie = "computer_view_as"
+
 type SessionUser struct {
-	ID   string
-	Role string
+	ID, Role, RealID, RealRole string
+	Name, Email                *string
+	RealUser                   map[string]any
 }
 
-// AuthMiddleware wraps a handler, resolving the session user from the signed
-// cookie and attaching it to the request context. 401 if missing/invalid.
-//
-// Every data endpoint follows the same pattern: resolve the effective user,
-// return 401 if none, check ownership, return 404 if not theirs, then act
-// (porting guide 5.1).
+func identity(u *models.User) map[string]any {
+	return map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "image": u.Image, "role": u.Role}
+}
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		secret := config.Load().Secret()
-		su, err := ReadSession(r, secret)
-		if err != nil {
-			handlers.WriteJSON(w, http.StatusUnauthorized, handlers.Unauthorized("Unauthorized"))
+		s, e := ReadSession(r, config.Load().Secret())
+		if e != nil {
+			failure(w, 401, "Unauthorized")
 			return
 		}
-		// Re-verify the user still exists and refresh the role from the DB so
-		// promotions (ADMIN_EMAILS) take effect without re-login.
-		d := db.FromContext(r.Context())
-		if d != nil {
-			repo := db.NewUserRepo(d)
-			u, err := repo.FindByID(r.Context(), su.ID)
-			if err != nil {
-				handlers.WriteJSON(w, http.StatusUnauthorized, handlers.Unauthorized("Unauthorized"))
+		repo := db.NewUserRepo(db.FromContext(r.Context()))
+		u, e := repo.FindByID(r.Context(), s.ID)
+		if e != nil {
+			failure(w, 401, "Unauthorized")
+			return
+		}
+		if u.Role != "ADMIN" && u.Email != nil && config.IsAdminEmail(*u.Email) {
+			if e = repo.SetRole(r.Context(), u.ID, "ADMIN"); e != nil {
+				failure(w, 500, "Unable to resolve role")
 				return
 			}
-			su.Role = u.Role
+			u.Role = "ADMIN"
 		}
-		ctx := WithSession(r.Context(), su)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		s.RealID, s.RealRole, s.RealUser = u.ID, u.Role, identity(u)
+		s.ID, s.Role, s.Name, s.Email = u.ID, u.Role, u.Name, u.Email
+		if u.Role == "ADMIN" {
+			if c, e := r.Cookie(ViewAsCookie); e == nil && c.Value != "" && c.Value != u.ID {
+				if target, e := repo.FindByID(r.Context(), c.Value); e == nil {
+					s.ID, s.Role, s.Name, s.Email = target.ID, target.Role, target.Name, target.Email
+				}
+			}
+		}
+		next.ServeHTTP(w, r.WithContext(WithSession(r.Context(), s)))
 	})
 }
 
-// SessionFromContext pulls the verified session user from the request context.
+type sessionKey struct{}
+
+func WithSession(ctx context.Context, s *SessionUser) context.Context {
+	return context.WithValue(ctx, sessionKey{}, s)
+}
 func SessionFromContext(ctx context.Context) (*SessionUser, bool) {
-	v := ctx.Value(sessionKey)
-	if v == nil {
-		return nil, false
-	}
-	su, ok := v.(*SessionUser)
-	return su, ok
+	s, ok := ctx.Value(sessionKey{}).(*SessionUser)
+	return s, ok
 }
-
-type sessionKeyType struct{}
-
-var sessionKey sessionKeyType
-
-// WithSession attaches the session user to the context.
-func WithSession(ctx context.Context, su *SessionUser) context.Context {
-	return context.WithValue(ctx, sessionKey, su)
-}
-
-// RequireAdmin wraps a handler and returns 403 unless the session user is ADMIN.
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		su, ok := SessionFromContext(r.Context())
-		if !ok || su.Role != "ADMIN" {
-			handlers.WriteJSON(w, http.StatusForbidden, handlers.Forbidden("Forbidden"))
+		s, ok := SessionFromContext(r.Context())
+		if !ok || s.RealRole != "ADMIN" {
+			failure(w, 403, "Forbidden")
 			return
 		}
 		next.ServeHTTP(w, r)

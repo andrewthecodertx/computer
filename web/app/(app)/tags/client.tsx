@@ -21,6 +21,10 @@ export function TagsClient() {
   const [editName, setEditName] = useState('')
   const [editColor, setEditColor] = useState('#6366f1')
   const [loading, setLoading] = useState(true)
+  const [effectiveId, setEffectiveId] = useState('')
+  const [shareQuery, setShareQuery] = useState('')
+  const [shareUsers, setShareUsers] = useState<any[]>([])
+  useEffect(() => { fetch('/api/me').then(r => r.json()).then(me => setEffectiveId(me.effectiveUser?.id || '')).catch(() => {}) }, [])
 
   const loadTags = useCallback(async () => {
     const res = await fetch('/api/tags')
@@ -34,8 +38,9 @@ export function TagsClient() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { loadTags() }, [loadTags])
-  useEffect(() => { if (selectedTag) loadBookmarks(selectedTag) }, [selectedTag, loadBookmarks])
+  useEffect(() => { const timer = setTimeout(loadTags, 0); return () => clearTimeout(timer) }, [loadTags])
+  useEffect(() => { const timer = setTimeout(() => { if (selectedTag) loadBookmarks(selectedTag) }, 0); return () => clearTimeout(timer) }, [selectedTag, loadBookmarks])
+  useEffect(() => { const reload = () => { loadTags(); if (selectedTag) loadBookmarks(selectedTag) }; window.addEventListener('computer:bookmarks-changed', reload); return () => window.removeEventListener('computer:bookmarks-changed', reload) }, [loadTags, loadBookmarks, selectedTag])
 
   const createTag = async () => {
     if (!newName) return
@@ -45,14 +50,16 @@ export function TagsClient() {
   }
 
   const updateTag = async (id: string) => {
-    await fetch(`/api/tags/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: editName, color: editColor }) })
+    const response = await fetch(`/api/tags/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: editName, color: editColor }) })
+    if (!response.ok) { toast.error('Could not update tag'); return }
     setEditingId(null)
     loadTags()
   }
 
   const deleteTag = async (id: string) => {
     if (!confirm('Delete this tag?')) return
-    await fetch(`/api/tags/${id}`, { method: 'DELETE' })
+    const response = await fetch(`/api/tags/${id}`, { method: 'DELETE' })
+    if (!response.ok) { toast.error('Could not delete tag'); return }
     toast.success('Tag deleted')
     if (selectedTag === id) setSelectedTag(null)
     loadTags()
@@ -88,8 +95,8 @@ export function TagsClient() {
                   <div className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: t.color }} />
                   <span className="text-sm font-medium flex-1 truncate">{t.name}</span>
                   <span className="text-xs text-muted-foreground">{t._count?.bookmarks ?? 0}</span>
-                  <button onClick={(e: React.MouseEvent) => { e.stopPropagation(); setEditingId(t.id); setEditName(t.name); setEditColor(t.color) }}><Edit className="h-3 w-3 text-muted-foreground" /></button>
-                  <button onClick={(e: React.MouseEvent) => { e.stopPropagation(); deleteTag(t.id) }}><Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" /></button>
+                  {t.ownerId === effectiveId ? <><button aria-label="Edit tag" onClick={(e: React.MouseEvent) => { e.stopPropagation(); setEditingId(t.id); setEditName(t.name); setEditColor(t.color) }}><Edit className="h-3 w-3 text-muted-foreground" /></button>
+                  <button aria-label="Delete tag" onClick={(e: React.MouseEvent) => { e.stopPropagation(); deleteTag(t.id) }}><Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" /></button></> : <span className="text-xs text-muted-foreground">Shared</span>}
                 </>
               )}
             </div>
@@ -101,6 +108,11 @@ export function TagsClient() {
         {selectedTag ? (
           <div className="space-y-4">
             <h2 className="font-medium">Bookmarks tagged: <Badge style={{ backgroundColor: `${tags.find(t => t.id === selectedTag)?.color ?? '#6366f1'}20`, color: tags.find(t => t.id === selectedTag)?.color }}>{tags.find(t => t.id === selectedTag)?.name}</Badge></h2>
+            {tags.find(t => t.id === selectedTag)?.ownerId === effectiveId && <div className="space-y-2 rounded border p-3">
+              <Input placeholder="Share this tag with a user…" value={shareQuery} onChange={async e => { const q = e.target.value; setShareQuery(q); if (q.length < 2) { setShareUsers([]); return } const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`); if (res.ok) setShareUsers(await res.json()) }} />
+              {shareUsers.map(u => <Button key={u.id} size="sm" variant="outline" onClick={async () => { const res = await fetch(`/api/tags/${selectedTag}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shareUserIds: [u.id] }) }); if (!res.ok) { toast.error('Could not share tag'); return } toast.success('Tag shared'); setShareUsers([]); setShareQuery(''); loadTags() }}>Share with {u.name || u.email}</Button>)}
+              {(tags.find(t => t.id === selectedTag)?.sharedWith || []).map(share => <Button key={share.userId} size="xs" variant="ghost" onClick={async () => { const res = await fetch(`/api/tags/${selectedTag}/share/${share.userId}`, { method: 'DELETE' }); if (!res.ok) { toast.error('Could not stop sharing'); return } loadTags() }}>Stop sharing with {share.userId.slice(0, 8)}…</Button>)}
+            </div>}
             {loading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-32 rounded-lg bg-muted animate-pulse" />)}

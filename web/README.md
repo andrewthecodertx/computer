@@ -1,4 +1,8 @@
-# computer
+# computer — web UI
+
+This app now runs inside the root Compose stack. See [../README.md](../README.md)
+for current setup and commands. The Go API owns database access; NextAuth owns
+browser sessions. The sections below describe the original pre-port application.
 
 A multi-user, web-based "link operating system". You collect URLs from apps
 and sites and organize them by calendar date, tag, Nextcloud contact, or a

@@ -56,15 +56,19 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   }, [])
 
   useEffect(() => {
-    loadPages().then((data) => {
+    const timer = setTimeout(() => loadPages().then((data) => {
       if (!activeId && data.length) setActiveId(data[0].id)
-    }).catch((e) => console.error('Failed to load pages', e))
+    }).catch((e) => console.error('Failed to load pages', e)), 0)
+    return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadPages])
 
   useEffect(() => {
-    if (activeId) loadPage(activeId).catch((e) => console.error('Failed to load page', e))
-    else setPage(null)
+    const timer = setTimeout(() => {
+      if (activeId) loadPage(activeId).catch((e) => console.error('Failed to load page', e))
+      else setPage(null)
+    }, 0)
+    return () => clearTimeout(timer)
   }, [activeId, loadPage])
 
   const select = (id: string) => {

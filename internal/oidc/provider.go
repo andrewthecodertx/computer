@@ -22,7 +22,7 @@ import (
 // Settings page and the login page read to decide whether to show the
 // "Sign in with Authelia" button.
 //
-//   GET /api/auth/oidc/status  ->  {enabled, issuerSet, clientIdSet, clientSecretSet, issuer}
+//	GET /api/auth/oidc/status  ->  {enabled, issuerSet, clientIdSet, clientSecretSet, issuer}
 func HandleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
@@ -33,48 +33,48 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 	s := Status()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"enabled":          s.Enabled,
-		"issuerSet":        s.IssuerSet,
-		"clientIdSet":      s.ClientIDSet,
-		"clientSecretSet":  s.ClientSecretSet,
-		"issuer":           s.Issuer,
+		"enabled":         s.Enabled,
+		"issuerSet":       s.IssuerSet,
+		"clientIdSet":     s.ClientIDSet,
+		"clientSecretSet": s.ClientSecretSet,
+		"issuer":          s.Issuer,
 	})
 }
 
 // HandleLogin starts the OIDC authorization-code flow. STUB: returns 501 until
 // the client drives the flow via NextAuth.
 //
-//   GET /api/auth/oidc/login
+//	GET /api/auth/oidc/login
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotImplemented)
 	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error":   "oidc not implemented",
-		"detail":  "Authelia OIDC is driven by the client (NextAuth); this handler is a stub",
+		"error":  "oidc not implemented",
+		"detail": "Authelia OIDC is driven by the client (NextAuth); this handler is a stub",
 	})
 }
 
 // HandleCallback is the Authelia OIDC callback. STUB: returns 501 until the
 // client drives the flow via NextAuth.
 //
-//   GET /api/auth/callback/authelia
+//	GET /api/auth/callback/authelia
 func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotImplemented)
 	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error":   "oidc not implemented",
-		"detail":  "Authelia OIDC is driven by the client (NextAuth); this handler is a stub",
+		"error":  "oidc not implemented",
+		"detail": "Authelia OIDC is driven by the client (NextAuth); this handler is a stub",
 	})
 }
 
 // Profile maps an Authelia userinfo response to a user identity. Porting guide
 // 3.1: id=sub, name = name ?? preferred_username ?? sub, email, image = picture.
 type Profile struct {
-	Sub             string `json:"sub"`
-	Name            string `json:"name"`
+	Sub               string `json:"sub"`
+	Name              string `json:"name"`
 	PreferredUsername string `json:"preferred_username"`
-	Email           string `json:"email"`
-	Picture         string `json:"picture"`
+	Email             string `json:"email"`
+	Picture           string `json:"picture"`
 }
 
 // MapProfile converts a raw Authelia profile into the identity fields.

@@ -33,7 +33,13 @@ export function DashboardClient() {
     setLoading(false)
   }, [search])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(new URLSearchParams(window.location.search).get('search') || ''), 0)
+    const handler = (event: Event) => setSearch((event as CustomEvent<string>).detail)
+    window.addEventListener('computer:search', handler)
+    return () => { clearTimeout(timer); window.removeEventListener('computer:search', handler) }
+  }, [])
 
   const displayBookmarks = tab === 'mine' ? bookmarks : sharedBookmarks
 
