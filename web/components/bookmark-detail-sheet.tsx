@@ -12,6 +12,7 @@ import type { Bookmark } from '@/components/app-shell'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { BookmarkExtras } from '@/components/bookmark-extras'
+import { format } from 'date-fns'
 
 interface Props {
   bookmark: Bookmark | null
@@ -37,13 +38,18 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
   const [columnId, setColumnId] = useState('')
   const [contactId, setContactId] = useState('')
   const [title, setTitle] = useState('')
+  const [url, setUrl] = useState('')
+  const [description, setDescription] = useState('')
+  const [tagIds, setTagIds] = useState<string[]>([])
+  const [allTags, setAllTags] = useState<{ id: string; name: string; color: string }[]>([])
   const canEdit = !!bookmark && effectiveId === bookmark.ownerId
   useEffect(() => {
     if (!bookmark) return
-    Promise.all([fetch('/api/me'), fetch('/api/kanban/columns'), fetch('/api/contacts')]).then(async ([me, cols, people]) => {
+    Promise.all([fetch('/api/me'), fetch('/api/kanban/columns'), fetch('/api/contacts'), fetch('/api/tags')]).then(async ([me, cols, people, tags]) => {
       if (me.ok) setEffectiveId((await me.json()).effectiveUser.id)
       if (cols.ok) setColumns(await cols.json())
       if (people.ok) setContacts(await people.json())
+      if (tags.ok) setAllTags(await tags.json())
     }).catch(() => toast.error('Could not load bookmark options'))
   }, [bookmark])
 
@@ -53,7 +59,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
       setNotes(bookmark?.notes ?? '')
       setKanban(bookmark?.kanbanStatus ?? 'INBOX')
       setDueDate(bookmark?.dueDate ? new Date(bookmark.dueDate).toISOString().split('T')[0] : '')
-      setAlertAt(bookmark?.alertAt ? new Date(bookmark.alertAt).toISOString().slice(0, 16) : '')
+      setAlertAt(bookmark?.alertAt ? format(new Date(bookmark.alertAt), "yyyy-MM-dd'T'HH:mm") : '')
       setIsPublic(bookmark?.isPublic ?? false)
       setImapEnabled(bookmark?.imapWatchEnabled ?? false)
       setImapQuery(bookmark?.imapQuery ?? '')
@@ -61,6 +67,9 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
       setColumnId(bookmark.kanbanColumnId || '')
       setContactId(bookmark.contactId || '')
       setTitle(bookmark.title || '')
+      setUrl(bookmark.url)
+      setDescription(bookmark.description || '')
+      setTagIds(bookmark.tags.map(({ tag }) => tag.id))
       }, 0)
       return () => clearTimeout(timer)
     }
@@ -76,11 +85,14 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
         body: JSON.stringify({
           notes,
           title,
+          url,
+          description: description || null,
+          tagIds: tagIds.length === bookmark.tags.length && bookmark.tags.every(({ tag }) => tagIds.includes(tag.id)) ? undefined : tagIds,
           kanbanColumnId: columnId || null,
           contactId: contactId || null,
           kanbanStatus: kanban,
           dueDate: dueDate || null,
-          alertAt: alertAt || null,
+          alertAt: alertAt ? new Date(alertAt).toISOString() : null,
           isPublic,
           imapWatchEnabled: imapEnabled,
           imapQuery: imapQuery || null,
@@ -95,7 +107,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
       }
     } catch { toast.error('Error saving') }
     setSaving(false)
-  }, [bookmark, notes, title, columnId, contactId, kanban, dueDate, alertAt, isPublic, imapEnabled, imapQuery, onUpdate])
+  }, [bookmark, notes, title, url, description, tagIds, columnId, contactId, kanban, dueDate, alertAt, isPublic, imapEnabled, imapQuery, onUpdate])
 
   const handleDelete = useCallback(async () => {
     if (!bookmark || !confirm('Delete this bookmark?')) return
@@ -168,6 +180,11 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
             <span className="truncate">{bookmark?.url ?? ''}</span>
           </a>
 
+          {canEdit && <div className="space-y-3">
+            <label className="block text-xs font-medium" htmlFor="bookmark-url">URL<Input id="bookmark-url" value={url} onChange={e => setUrl(e.target.value)} className="mt-1" /></label>
+            <label className="block text-xs font-medium" htmlFor="bookmark-description">Description<Textarea id="bookmark-description" value={description} onChange={e => setDescription(e.target.value)} rows={2} className="mt-1" /></label>
+          </div>}
+
           {/* OG Preview */}
           {bookmark?.ogImage && (
             <div className="rounded-lg border overflow-hidden">
@@ -191,6 +208,11 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
               ))}
               {(bookmark?.tags?.length ?? 0) === 0 && <span className="text-xs text-muted-foreground">No tags</span>}
             </div>
+            {canEdit && bookmark && <div className="mt-2 space-y-1">
+              {[...new Map([...allTags, ...bookmark.tags.map(({ tag }) => tag)].map(tag => [tag.id, tag])).values()].map(tag => <label key={tag.id} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={tagIds.includes(tag.id)} onChange={e => setTagIds(previous => e.target.checked ? [...previous, tag.id] : previous.filter(id => id !== tag.id))} />{tag.name}
+              </label>)}
+            </div>}
           </div>
 
           {/* Notes */}

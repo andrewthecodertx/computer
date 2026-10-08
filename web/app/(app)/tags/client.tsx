@@ -9,6 +9,7 @@ import { BookmarkDetailSheet } from '@/components/bookmark-detail-sheet'
 import { Plus, Tags, Trash2, Edit, Check, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Bookmark, TagWithCount } from '@/components/app-shell'
+import { fetchBookmarks } from '@/lib/bookmarks'
 
 export function TagsClient() {
   const [tags, setTags] = useState<TagWithCount[]>([])
@@ -33,9 +34,9 @@ export function TagsClient() {
 
   const loadBookmarks = useCallback(async (tagId: string) => {
     setLoading(true)
-    const res = await fetch(`/api/bookmarks?tagId=${tagId}`)
-    if (res.ok) setBookmarks(await res.json())
-    setLoading(false)
+    try { setBookmarks(await fetchBookmarks(new URLSearchParams({ tagId }))) }
+    catch { toast.error('Could not load bookmarks') }
+    finally { setLoading(false) }
   }, [])
 
   useEffect(() => { const timer = setTimeout(loadTags, 0); return () => clearTimeout(timer) }, [loadTags])

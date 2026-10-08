@@ -14,7 +14,7 @@ non-admin administration, **400** for invalid input, **409** for duplicates.
 |---|---|---|
 | GET | `/healthz` | `{"status":"ok"}` (process liveness) |
 | GET | `/readyz` | `{"status":"ready"}` after database ping; 503 when unavailable |
-| POST | `/api/signup` | 201 `{ok:true,userId}`; body `{email,password,name?}` |
+| POST | `/api/signup` | 201 `{ok:true,userId}`; body `{email,password,name?}`; 403 for operator-reserved `ADMIN_EMAILS` addresses |
 | POST | `/api/auth/login` | `{ok:true,user:{id,name,email,image,role}}` and signed HttpOnly cookie |
 | GET | `/api/auth/session` | `{user}` or `null` for no valid cookie |
 | POST | `/api/auth/signout` | `{ok:true}` and expired cookie |
@@ -25,6 +25,12 @@ non-admin administration, **400** for invalid input, **409** for duplicates.
 
 The browser's NextAuth `/api/auth/*` endpoints remain on the Next server.
 Direct Go API consumers use the `computer_session` cookie from login.
+Go login accepts JSON and rejects foreign browser origins. The custom Next.js
+login endpoint also requires the configured same-origin `Origin` header.
+`ADMIN_EMAILS` reserves administrator addresses for operator provisioning and
+disables public first-admin bootstrap while set. Automatic promotion of an
+existing allowlisted user requires `emailVerified`; DB administrator roles
+remain authoritative.
 
 ## Bookmarks
 
@@ -34,9 +40,9 @@ A bookmark includes camelCase scalar fields plus `tags:[{tag}]`, `contact`,
 
 | Method | Path | Returns / behavior |
 |---|---|---|
-| GET | `/api/bookmarks` | Array, newest-updated first, maximum 200; query `search,tagId,contactId,kanban,date,shared` |
+| GET | `/api/bookmarks` | Array, newest-updated then ID descending; query `search,tagId,contactId,kanban,date,shared,limit,cursor`; default/max page size 200 |
 | POST | `/api/bookmarks` | 201 bookmark; body `{url,title?,description?,notes?,dueDate?,alertAt?,kanbanStatus?,contactId?,tagIds?,isPublic?,imapWatchEnabled?,imapQuery?}` |
-| GET | `/api/bookmarks/{id}` | Bookmark if owned, shared, or public |
+| GET | `/api/bookmarks/{id}` | Full bookmark if owned or shared; public-only access uses the redacted public endpoint |
 | PUT | `/api/bookmarks/{id}` | Updated bookmark, owner only; fields above plus `kanbanColumnId`; omitted fields stay unchanged; nullable fields can be cleared |
 | DELETE | `/api/bookmarks/{id}` | `{ok:true}`, owner only |
 | POST | `/api/bookmarks/{id}/share` | `{ok:true}`; body `{userIds?,isPublic?}`; adds shares |
@@ -46,6 +52,12 @@ A bookmark includes camelCase scalar fields plus `tags:[{tag}]`, `contact`,
 | GET | `/api/public/bookmarks/{id}` | Public bookmark projection without login; private records return 404 |
 
 Public HTML pages remain at `/share/bookmark/{id}` on the Next.js server.
+For pagination, read the `X-Next-Cursor` response header and pass that opaque
+value as `cursor` with the same filters. An absent header marks the final page.
+`limit` must be between 1 and 200. The web proxy forwards the cursor header.
+Public responses allowlist URL/preview/notes/date/tag fields and owner name;
+contacts, share recipients, owner email, mailbox queries, and alert metadata
+are excluded.
 Updating `alertAt` resets `alertSent`; replacing `tagIds` is transactional.
 Tags, columns and contacts are checked for accessibility/ownership.
 

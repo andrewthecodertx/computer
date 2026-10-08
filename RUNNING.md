@@ -119,12 +119,30 @@ Open **http://localhost:3000** in your browser.
 2. Sign in using those credentials.
 3. Add a bookmark to check that saving works.
 
-The first account whose email does not end in `@example.com` becomes the
-administrator. Create your own account first. Later accounts are regular
-users; an administrator can manage their roles from the Admin screen.
+With the default empty `ADMIN_EMAILS`, the first account whose email does not
+end in `@example.com` becomes the administrator. Create your own account first.
+Later accounts are regular users; an administrator can manage their roles
+from the Admin screen.
+
+Addresses listed in `ADMIN_EMAILS` are reserved and cannot be claimed through
+public signup. To create an account for one of those addresses, use the
+operator-provisioning command in [README.md](README.md#developer-commands).
 
 The default setup is accessible only from this computer. Public bookmark
 links are also local until you configure externally accessible hosting.
+
+### What to test
+
+- Create, edit, and delete a bookmark, including its URL, description, and tags.
+- Organize bookmarks using tags, calendar dates, contacts, and kanban columns.
+- Write a Markdown page, switch between pages, and download its Markdown export.
+- Share a bookmark, tag, or date with a second account and revoke the share.
+- Open a public bookmark link in a signed-out browser window.
+
+Pages autosave after a short pause and finish saving before switching page
+tabs. If saving fails, the page remains **Unsaved** and a draft is kept in the
+current browser tab. Reconnect and click **Save now**; tab-local drafts are
+not a replacement for database backups.
 
 ## Everyday commands
 

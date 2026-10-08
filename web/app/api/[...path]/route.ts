@@ -19,7 +19,7 @@ async function proxy(request: NextRequest) {
       body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer(),
     })
     const outgoing = new Headers()
-    for (const name of ['content-type', 'content-disposition', 'set-cookie']) {
+    for (const name of ['content-type', 'content-disposition', 'set-cookie', 'x-next-cursor']) {
       const value = response.headers.get(name)
       if (value) outgoing.set(name, value)
     }

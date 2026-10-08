@@ -58,9 +58,11 @@ func AdminEmails() []string {
 	if s == "" {
 		return nil
 	}
-	out := strings.Split(s, ",")
-	for i := range out {
-		out[i] = strings.TrimSpace(out[i])
+	var out []string
+	for _, email := range strings.Split(s, ",") {
+		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+			out = append(out, email)
+		}
 	}
 	return out
 }

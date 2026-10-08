@@ -2,30 +2,44 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/markdown"
 	"github.com/andrew/go-computer/internal/preview"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 func bookmark(r *http.Request, id string, public bool) (object, error) {
-	where := `b.id=$1 AND (` + db.BookmarkVisible + ` OR b."isPublic")`
 	if public {
-		where = `b.id=$1 AND b."isPublic" AND $2::text IS NOT NULL`
+		return db.One(r.Context(), database(r), `SELECT jsonb_build_object(
+		 'id',b.id,'url',b.url,'title',b.title,'description',b.description,'notes',b.notes,
+		 'favicon',b.favicon,'ogImage',b."ogImage",'ogTitle',b."ogTitle",'ogDescription',b."ogDescription",
+		 'dueDate',b."dueDate",'isPublic',b."isPublic",
+		 'owner',(SELECT jsonb_build_object('name',u.name) FROM "User" u WHERE u.id=b."ownerId"),
+		 'tags',COALESCE((SELECT jsonb_agg(jsonb_build_object('tag',jsonb_build_object('id',t.id,'name',t.name,'color',t.color))) FROM "BookmarkTag" bt JOIN "Tag" t ON t.id=bt."tagId" WHERE bt."bookmarkId"=b.id),'[]'::jsonb))
+		 FROM "Bookmark" b WHERE b.id=$1 AND b."isPublic"`, id)
 	}
-	uid := ""
-	if !public {
-		uid = user(r)
-	}
+	where := `b.id=$1 AND ` + db.BookmarkVisible
+	uid := user(r)
 	return db.One(r.Context(), database(r), `SELECT `+db.BookmarkView+` || jsonb_build_object('pageLinks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('page',jsonb_build_object('id',p.id,'title',p.title))) FROM "PageBookmark" pb JOIN "Page" p ON p.id=pb."pageId" WHERE pb."bookmarkId"=b.id AND p."ownerId"=$2),'[]'::jsonb)) FROM "Bookmark" b WHERE `+where, id, uid)
 }
 func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 	args := []any{nil, user(r)}
 	sp := r.URL.Query()
+	limit := 200
+	if raw := sp.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 200 {
+			respond(w, 0, nil, bad("Limit must be between 1 and 200"))
+			return
+		}
+		limit = n
+	}
 	where := `b."ownerId"=$2`
 	if sp.Get("shared") == "true" {
 		where = db.BookmarkVisible + ` AND b."ownerId"<>$2`
@@ -62,7 +76,27 @@ func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 		where = strings.Replace(where, `b."ownerId"=$2`, db.BookmarkVisible, 1)
 	}
 	where += ` AND $1::text IS NULL`
-	v, e := db.Many(r.Context(), database(r), `SELECT `+db.BookmarkView+` FROM "Bookmark" b WHERE `+where+` ORDER BY b."updatedAt" DESC LIMIT 200`, args...)
+	if raw := sp.Get("cursor"); raw != "" {
+		var cursor struct {
+			UpdatedAt time.Time `json:"updatedAt"`
+			ID        string    `json:"id"`
+		}
+		data, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil || json.Unmarshal(data, &cursor) != nil || cursor.UpdatedAt.IsZero() || cursor.ID == "" {
+			respond(w, 0, nil, bad("Invalid cursor"))
+			return
+		}
+		args = append(args, cursor.UpdatedAt, cursor.ID)
+		where += fmt.Sprintf(` AND (b."updatedAt",b.id)<($%d,$%d)`, len(args)-1, len(args))
+	}
+	args = append(args, limit+1)
+	v, e := db.Many(r.Context(), database(r), `SELECT `+db.BookmarkView+` FROM "Bookmark" b WHERE `+where+fmt.Sprintf(` ORDER BY b."updatedAt" DESC,b.id DESC LIMIT $%d`, len(args)), args...)
+	if e == nil && len(v) > limit {
+		v = v[:limit]
+		last := v[len(v)-1]
+		cursor, _ := json.Marshal(object{"updatedAt": last["updatedAt"], "id": last["id"]})
+		w.Header().Set("X-Next-Cursor", base64.RawURLEncoding.EncodeToString(cursor))
+	}
 	respond(w, 200, v, e)
 }
 func validStatus(s string) bool {

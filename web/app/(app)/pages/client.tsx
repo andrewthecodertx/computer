@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { PageAutosave, type PageSaveState } from '@/lib/page-autosave'
 
 export const PAGES_CHANGED = 'computer:pages-changed'
 
@@ -30,11 +31,38 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   const [mode, setMode] = useState<'edit' | 'preview'>('preview')
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
-  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'dirty'>('saved')
+  const [saveStates, setSaveStates] = useState<Record<string, PageSaveState>>({})
   const [linkQuery, setLinkQuery] = useState('')
   const [results, setResults] = useState<LinkedBookmark[]>([])
   const [linkOpen, setLinkOpen] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const activePage = useRef(initialId)
+  const loadSequence = useRef(0)
+  const selectionSequence = useRef(0)
+  const [autosave] = useState(() => new PageAutosave(async (id, content) => {
+    const body = JSON.stringify({ content })
+    try {
+      const res = await fetch(`/api/pages/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body,
+        keepalive: new TextEncoder().encode(body).length < 60000,
+      })
+      if (!res.ok) throw new Error('Save failed')
+    } catch (error) { toast.error('Could not save page. Your draft is kept in this tab; retry saving.'); throw error }
+  }, (id, state) => setSaveStates(previous => ({ ...previous, [id]: state }))))
+  const saveState = activeId ? saveStates[activeId] ?? 'saved' : 'saved'
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (autosave.hasUnsaved()) { event.preventDefault(); event.returnValue = '' }
+    }
+    const flush = () => { void autosave.flushAll() }
+    window.addEventListener('beforeunload', beforeUnload)
+    window.addEventListener('pagehide', flush)
+    return () => {
+      window.removeEventListener('beforeunload', beforeUnload)
+      window.removeEventListener('pagehide', flush)
+      flush()
+    }
+  }, [autosave])
 
   const loadPages = useCallback(async () => {
     const res = await fetch('/api/pages')
@@ -45,22 +73,24 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   }, [])
 
   const loadPage = useCallback(async (id: string) => {
+    const sequence = ++loadSequence.current
     const res = await fetch(`/api/pages/${id}`)
+    if (sequence !== loadSequence.current || activePage.current !== id) return
     if (!res.ok) { setPage(null); return }
     const data: PageDetail = await res.json()
+    if (sequence !== loadSequence.current || activePage.current !== id) return
+    const draft = autosave.draft(id)
     setPage(data)
     setTitle(data.title)
-    setContent(data.content)
-    setSaveState('saved')
-    if (!data.content) setMode('edit')
-  }, [])
+    setContent(draft ?? data.content)
+    if (draft !== undefined || !data.content) setMode('edit')
+  }, [autosave])
 
   useEffect(() => {
     const timer = setTimeout(() => loadPages().then((data) => {
-      if (!activeId && data.length) setActiveId(data[0].id)
+      if (!activePage.current && data.length) { activePage.current = data[0].id; setActiveId(data[0].id) }
     }).catch((e) => console.error('Failed to load pages', e)), 0)
     return () => clearTimeout(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadPages])
 
   useEffect(() => {
@@ -71,19 +101,24 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     return () => clearTimeout(timer)
   }, [activeId, loadPage])
 
-  const select = (id: string) => {
+  const select = async (id: string) => {
+    const sequence = ++selectionSequence.current
+    if (activePage.current && !await autosave.flush(activePage.current)) return
+    if (sequence !== selectionSequence.current) return
+    activePage.current = id
     setActiveId(id)
     router.replace(`/pages?id=${id}`)
   }
 
   const patch = async (body: Record<string, unknown>) => {
-    if (!activeId) return null
-    const res = await fetch(`/api/pages/${activeId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if (!activeId || page?.id !== activeId) return null
+    const res = await fetch(`/api/pages/${page.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     if (!res.ok) { toast.error('Could not save page'); return null }
     return res
   }
 
   const createPage = async () => {
+    if (activePage.current && !await autosave.flush(activePage.current)) return
     const res = await fetch('/api/pages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Untitled page' }) })
     if (!res.ok) { toast.error('Could not create page'); return }
     const p = await res.json()
@@ -94,21 +129,16 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   }
 
   const onContentChange = (v: string) => {
+    if (!page || page.id !== activeId) return
     setContent(v)
-    setSaveState('dirty')
-    if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(async () => {
-      setSaveState('saving')
-      const ok = await patch({ content: v })
-      setSaveState(ok ? 'saved' : 'dirty')
-    }, 800)
+    autosave.edit(page.id, v)
   }
 
   const saveTitle = async () => {
     const t = title.trim() || 'Untitled page'
     if (!page || t === page.title) return
     if (await patch({ title: t })) {
-      setPage({ ...page, title: t })
+      setPage(current => current?.id === page.id ? { ...current, title: t } : current)
       await loadPages(); notify()
     }
   }
@@ -116,7 +146,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   const togglePin = async () => {
     if (!page) return
     if (await patch({ pinned: !page.pinned })) {
-      setPage({ ...page, pinned: !page.pinned })
+      setPage(current => current?.id === page.id ? { ...current, pinned: !page.pinned } : current)
       await loadPages(); notify()
     }
   }
@@ -132,8 +162,9 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     await loadPages(); notify()
   }
 
-  const download = () => {
+  const download = async () => {
     if (!activeId) return
+    if (!await autosave.flush(activeId)) return
     const a = document.createElement('a')
     a.href = `/api/pages/${activeId}/markdown`
     a.download = ''
@@ -142,24 +173,29 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
 
   const remove = async () => {
     if (!page || !confirm(`Delete page "${page.title}"? Bookmarks are kept.`)) return
+    if (!await autosave.flush(page.id)) return
     const res = await fetch(`/api/pages/${page.id}`, { method: 'DELETE' })
     if (!res.ok) { toast.error('Could not delete page'); return }
+    autosave.forget(page.id)
     const data = await loadPages(); notify()
     if (data.length) select(data[0].id)
-    else { setActiveId(null); router.replace('/pages') }
+    else { activePage.current = null; setActiveId(null); router.replace('/pages') }
   }
 
   useEffect(() => {
     if (!linkOpen) return
     const q = linkQuery.trim()
     const t = setTimeout(async () => {
-      const res = await fetch(`/api/bookmarks${q ? `?search=${encodeURIComponent(q)}` : ''}`)
+      const params = new URLSearchParams({ limit: '8' })
+      if (q) params.set('search', q)
+      const res = await fetch(`/api/bookmarks?${params}`)
       if (res.ok) setResults((await res.json()).slice(0, 8))
     }, 250)
     return () => clearTimeout(t)
   }, [linkQuery, linkOpen])
 
   const addBookmark = async (bookmarkId: string) => {
+    if (activeId && !await autosave.flush(activeId)) return
     if (await patch({ addBookmarkId: bookmarkId })) {
       setLinkOpen(false); setLinkQuery('')
       if (activeId) await loadPage(activeId)
@@ -206,7 +242,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
         <Button size="sm" onClick={createPage}><Plus className="mr-1 h-4 w-4" />New page</Button>
       </div>
 
-      {!page ? (
+      {!page || page.id !== activeId ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
           <FileText className="h-10 w-10 text-muted-foreground" />
           <h2 className="font-display text-xl font-semibold">{pages.length ? 'Select a page' : 'No pages yet'}</h2>
@@ -218,6 +254,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
           <div className="mb-6 flex flex-wrap items-center gap-2">
             <input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} className="min-w-0 flex-1 bg-transparent font-display text-3xl font-bold outline-none" aria-label="Page title" />
             <span className="text-xs text-muted-foreground">{saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : 'Saved'}</span>
+            {saveState === 'dirty' && <Button size="sm" variant="outline" onClick={() => autosave.flush(page.id)}>Save now</Button>}
             <Button variant="ghost" size="icon-sm" title={mode === 'edit' ? 'Preview' : 'Edit'} onClick={() => setMode(mode === 'edit' ? 'preview' : 'edit')}>{mode === 'edit' ? <Eye className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}</Button>
             <Button variant="ghost" size="icon-sm" title={page.pinned ? 'Unpin' : 'Pin to sidebar'} onClick={togglePin}>{page.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}</Button>
             <Button variant="ghost" size="icon-sm" title="Move tab left" onClick={() => move(-1)}><ChevronLeft className="h-4 w-4" /></Button>

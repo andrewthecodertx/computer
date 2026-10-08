@@ -7,6 +7,7 @@ import { BookmarkDetailSheet } from '@/components/bookmark-detail-sheet'
 import { Users, RefreshCw, Mail, Phone } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Bookmark } from '@/components/app-shell'
+import { fetchBookmarks } from '@/lib/bookmarks'
 
 interface Contact {
   id: string
@@ -33,8 +34,8 @@ export function ContactsClient() {
   }, [])
 
   const loadBookmarks = useCallback(async (contactId: string) => {
-    const res = await fetch(`/api/bookmarks?contactId=${contactId}`)
-    if (res.ok) setBookmarks(await res.json())
+    try { setBookmarks(await fetchBookmarks(new URLSearchParams({ contactId }))) }
+    catch { toast.error('Could not load bookmarks') }
   }, [])
 
   useEffect(() => { const timer = setTimeout(loadContacts, 0); return () => clearTimeout(timer) }, [loadContacts])

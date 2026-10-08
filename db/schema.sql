@@ -79,6 +79,7 @@ CREATE TABLE "Bookmark" (
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX "Bookmark_ownerId_idx" ON "Bookmark"("ownerId");
+CREATE INDEX "Bookmark_ownerId_updatedAt_id_idx" ON "Bookmark"("ownerId","updatedAt" DESC,id DESC);
 CREATE INDEX "Bookmark_contactId_idx" ON "Bookmark"("contactId");
 CREATE INDEX "Bookmark_kanbanStatus_idx" ON "Bookmark"("kanbanStatus");
 CREATE INDEX "Bookmark_kanbanColumnId_idx" ON "Bookmark"("kanbanColumnId");

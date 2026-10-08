@@ -9,6 +9,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameM
 import type { Bookmark } from '@/components/app-shell'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
+import { fetchBookmarks } from '@/lib/bookmarks'
 
 const INITIAL_DATE = new Date(2026, 9, 1)
 
@@ -30,10 +31,12 @@ export function CalendarClient() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [res, shared, dates] = await Promise.all([fetch('/api/bookmarks'), fetch('/api/bookmarks?shared=true'), fetch('/api/shared-dates')])
-    if (res.ok && shared.ok) setBookmarks([...await res.json(), ...await shared.json()])
-    if (dates.ok) setSharedDates(await dates.json())
-    setLoading(false)
+    try {
+      const [mine, shared, dates] = await Promise.all([fetchBookmarks(), fetchBookmarks(new URLSearchParams({ shared: 'true' })), fetch('/api/shared-dates')])
+      setBookmarks([...mine, ...shared])
+      if (dates.ok) setSharedDates(await dates.json())
+    } catch { toast.error('Could not load calendar') }
+    finally { setLoading(false) }
   }, [])
 
   useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])

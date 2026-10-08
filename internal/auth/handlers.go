@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"strings"
 )
 
@@ -48,6 +49,10 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, "Password must be at most 72 bytes")
 		return
 	}
+	if config.IsAdminEmail(req.Email) {
+		failure(w, 403, "This administrator account must be provisioned by the operator")
+		return
+	}
 	repo := db.NewUserRepo(db.FromContext(r.Context()))
 	if _, e := repo.FindByEmail(r.Context(), req.Email); e == nil {
 		failure(w, 409, "User already exists")
@@ -64,11 +69,7 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		req.Name = strings.SplitN(req.Email, "@", 2)[0]
 	}
-	role := "USER"
-	if config.IsAdminEmail(req.Email) {
-		role = "ADMIN"
-	}
-	id, e := repo.Create(r.Context(), &db.NewUserInput{ID: db.NewID(), Name: req.Name, Email: req.Email, Password: hash, Role: role})
+	id, e := repo.Create(r.Context(), &db.NewUserInput{ID: db.NewID(), Name: req.Name, Email: req.Email, Password: hash, Role: "USER"})
 	if e != nil {
 		var pg *pgconn.PgError
 		if errors.As(e, &pg) && pg.Code == "23505" {
@@ -81,6 +82,21 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, SignupResponse{true, id})
 }
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
+	if strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0])) != "application/json" {
+		failure(w, 415, "Content-Type must be application/json")
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		allowed, err := url.Parse(config.Load().NextAuthURL)
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		if origin != scheme+"://"+r.Host && (err != nil || allowed.Host == "" || origin != allowed.Scheme+"://"+allowed.Host) {
+			failure(w, 403, "Invalid request origin")
+			return
+		}
+	}
 	var req SigninRequest
 	if !decode(w, r, &req) {
 		return

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Plus, Search, Inbox, Share2 } from 'lucide-react'
 import type { Bookmark } from '@/components/app-shell'
+import { fetchBookmarks } from '@/lib/bookmarks'
 
 export function DashboardClient() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
@@ -24,8 +25,8 @@ export function DashboardClient() {
       const params = new URLSearchParams()
       if (search) params.set('search', search)
       const [mine, shared] = await Promise.all([
-        fetch(`/api/bookmarks?${params}`).then(r => r.json()),
-        fetch('/api/bookmarks?shared=true').then(r => r.json()),
+        fetchBookmarks(params),
+        fetchBookmarks(new URLSearchParams({ shared: 'true' })),
       ])
       setBookmarks(mine ?? [])
       setSharedBookmarks(shared ?? [])

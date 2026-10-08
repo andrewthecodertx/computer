@@ -18,6 +18,11 @@ import (
 // They never truncate application tables or delete pre-existing accounts.
 func testServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	srv, _ := testServerDB(t)
+	return srv
+}
+func testServerDB(t *testing.T) (*httptest.Server, *db.DB) {
+	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("set TEST_DATABASE_URL to run PostgreSQL integration tests")
@@ -54,7 +59,7 @@ func testServer(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(NewServer(config.Load(), d).Handler)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, d
 }
 
 type apiClient struct {

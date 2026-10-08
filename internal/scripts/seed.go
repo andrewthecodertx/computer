@@ -6,11 +6,12 @@ import (
 	"github.com/andrew/go-computer/internal/db"
 	"golang.org/x/crypto/bcrypt"
 	"os"
+	"strings"
 )
 
 // Seed only creates the requested account; it never clears existing records.
 func Seed(ctx context.Context, d *db.DB) error {
-	email, password := os.Getenv("SEED_EMAIL"), os.Getenv("SEED_PASSWORD")
+	email, password := strings.ToLower(strings.TrimSpace(os.Getenv("SEED_EMAIL"))), os.Getenv("SEED_PASSWORD")
 	if email == "" || password == "" {
 		return fmt.Errorf("SEED_EMAIL and SEED_PASSWORD are required")
 	}
@@ -26,6 +27,10 @@ func Seed(ctx context.Context, d *db.DB) error {
 	if name == "" {
 		name = "Admin"
 	}
-	_, e = repo.Create(ctx, &db.NewUserInput{ID: db.NewID(), Name: name, Email: email, Password: string(hash), Role: "USER"})
+	role := "USER"
+	if db.IsAdminEmail(email) {
+		role = "ADMIN"
+	}
+	_, e = repo.Create(ctx, &db.NewUserInput{ID: db.NewID(), Name: name, Email: email, Password: string(hash), Role: role})
 	return e
 }

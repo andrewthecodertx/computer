@@ -8,6 +8,7 @@ import { BookmarkDetailSheet } from '@/components/bookmark-detail-sheet'
 import { ExternalLink, Search, Trash2, ChevronUp, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Bookmark } from '@/components/app-shell'
+import { fetchBookmarks } from '@/lib/bookmarks'
 
 export function BookmarksClient() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
@@ -21,9 +22,9 @@ export function BookmarksClient() {
     setLoading(true)
     const params = new URLSearchParams()
     if (search) params.set('search', search)
-    const res = await fetch(`/api/bookmarks?${params}`)
-    if (res.ok) setBookmarks(await res.json())
-    setLoading(false)
+    try { setBookmarks(await fetchBookmarks(params)) }
+    catch { toast.error('Could not load bookmarks') }
+    finally { setLoading(false) }
   }, [search])
 
   useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])

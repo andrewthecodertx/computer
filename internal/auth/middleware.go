@@ -32,7 +32,7 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			failure(w, 401, "Unauthorized")
 			return
 		}
-		if u.Role != "ADMIN" && u.Email != nil && config.IsAdminEmail(*u.Email) {
+		if u.Role != "ADMIN" && u.Email != nil && u.EmailVerified != nil && config.IsAdminEmail(*u.Email) {
 			if e = repo.SetRole(r.Context(), u.ID, "ADMIN"); e != nil {
 				failure(w, 500, "Unable to resolve role")
 				return

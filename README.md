@@ -29,8 +29,10 @@ On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
 - Web interface: **http://localhost:3000**. Sign up, then sign in.
 - Go API: **http://localhost:8080** (local access; endpoints in [API.md](API.md)).
 - PostgreSQL: `db:5432` inside Docker; not published on the host.
-- First non-`@example.com` account becomes administrator. `ADMIN_EMAILS` can
-  promote additional accounts. Existing accounts are preserved on restart.
+- With `ADMIN_EMAILS` empty, the first non-`@example.com` account becomes
+  administrator. Addresses in `ADMIN_EMAILS` are reserved for
+  operator-provisioned accounts; automatic
+  promotion requires a verified email. Existing accounts are preserved on restart.
 - `docker compose down` stops the stack. It does not delete the database volume.
 
 `make run` and `make stop` are optional shortcuts for the Compose commands.
@@ -65,7 +67,11 @@ database. Do not run the initial schema against an already initialized database.
 
 - Bookmarks: create/edit/delete, tags, contacts, previews, calendar dates,
   alerts, Markdown downloads and public read-only links.
+- Bookmark collections use cursor pagination; the UI follows every page so
+  collections larger than 200 remain visible on all organization screens.
 - Pages: Markdown editing/autosave, link collections, pinning, reorder/export.
+  Saves are queued per page; unsaved drafts are kept in the current browser tab
+  for recovery after a failed save. Page switching waits for pending saves.
 - Kanban: custom columns, card moves, reorder; deleting a column moves cards.
 - Sharing: bookmarks, tags and calendar dates; recipients read shared content.
   Owners can revoke shares. Shared tags and dates expose the associated URLs.
@@ -78,19 +84,68 @@ database. Do not run the initial schema against an already initialized database.
   Enabled email watchers also run every five minutes in the Go process,
   including watches enabled with the original mailbox-watch switch.
 
-### Authelia remains a client integration stub
+### Connecting Authelia (OIDC)
 
-As requested, the ultimate OIDC connection is reserved for the client.
-NextAuth retains the Authelia provider configuration and callback location;
-Go exposes placeholder-aware status and explicit **501** login/callback stubs.
-No unverified OIDC subject is accepted as a local user ID. Before enabling
-Authelia, connect verified OIDC identities to local Go User/Account records in
-the frontend sign-in callback. See `web/docs/AUTHELIA.md` and `web/auth.ts`.
-Email/password sign-in is fully functional in the meantime.
+**Authelia sign-in is currently stubbed. Connecting it requires both server
+configuration and developer integration; setting environment variables alone
+does not enable it.** Email/password sign-in works while that integration is
+pending. The full [Authelia connection guide](web/docs/AUTHELIA.md) includes
+the client registration example and the implementation handoff.
 
-Keep `AUTH_SECRET` stable: it derives the AES key for stored IMAP passwords.
-For HTTPS, set `NEXTAUTH_URL` to the public web URL and `COOKIE_SECURE=1`.
-OIDC values stay on the server and are never sent to the browser as secrets.
+#### 1. Register the app in Authelia
+
+Use an Authelia installation with OIDC enabled and a valid HTTPS issuer URL.
+Register `computer` as a confidential client with:
+
+- Scopes: `openid`, `profile`, `email`.
+- Grant type: `authorization_code`; response type: `code`.
+- Token endpoint authentication: `client_secret_basic`.
+- Redirect URI: `<PUBLIC_APP_URL>/api/auth/callback/authelia`, for example
+  `https://computer.company.tld/api/auth/callback/authelia`.
+
+Generate a client secret as described in the connection guide. Put its
+**hashed digest** in Authelia and its **plain value** in the app's
+`OIDC_CLIENT_SECRET`. The redirect URI must exactly match the public web URL
+and callback path. It points to the Next.js server, not the Go API on port 8080.
+
+#### 2. Configure computer
+
+Edit the root `.env`, replacing the sample values with your deployment values:
+
+```dotenv
+NEXTAUTH_URL=https://computer.company.tld
+COOKIE_SECURE=1
+OIDC_ISSUER=https://auth.company.tld
+OIDC_CLIENT_ID=computer
+OIDC_CLIENT_SECRET=<plain-client-secret>
+```
+
+Serve the web app through an HTTPS reverse proxy; the default Docker ports
+bind to localhost. Keep your existing `AUTH_SECRET` unchanged. Apply the
+environment changes with `docker compose up -d`, then check **Settings → OIDC**.
+It will report that the variables are configured but integration is pending.
+The login button remains disabled at this stage.
+
+#### 3. Complete the developer integration
+
+The trusted Next.js server owns OIDC verification and the callback. The
+remaining work is to:
+
+1. Implement Go-backed lookup/provisioning of a local `User` and `Account`
+   for the verified Authelia identity. A provisioning endpoint is not yet
+   supplied; any new endpoint must authenticate the trusted Next server.
+2. Update `web/auth.ts` to resolve the verified identity to the local
+   `User.id` and permit sign-in only after that succeeds. The session and
+   API assertion must use this local ID, not Authelia's `sub` claim. Existing
+   accounts need an explicit, verified account-linking policy.
+3. Enable the readiness gate in `web/app/login/client.tsx` after mapping works,
+   rebuild with `docker compose up -d --build`, and verify sign-in, first-login
+   provisioning, returning users, and Go-backed data access.
+
+The Go OIDC login/callback handlers in `internal/oidc/provider.go` deliberately
+return **501**. They are not the NextAuth callback implementation. Config status
+(including an `enabled` flag) indicates that values are present, not that an
+end-to-end login has been implemented.
 
 ## Developer commands
 
@@ -122,5 +177,38 @@ These verify login, UI bookmark creation, Go-backed persistence, public links,
 kanban, page autosave/exports and every application screen. Test accounts have
 unique names and only those accounts are deleted afterward.
 
-Optional initial account: `SEED_EMAIL=... SEED_PASSWORD=... make seed`.
-The seed command never replaces an existing password or deletes data.
+Targeted browser regressions (after `yarn build` in `web/`):
+
+```bash
+npm --prefix scripts run test:regressions
+```
+
+These run an isolated Next server with API fixtures and test login CSRF,
+autosave switching/ordering/recovery, pagination, and bookmark editing without
+creating or deleting application users.
+
+Optional operator-provisioned account: set its address in `ADMIN_EMAILS` in
+the root `.env`, run `docker compose up -d`, then:
+
+```bash
+docker compose exec -e SEED_EMAIL=admin@company.tld -e SEED_PASSWORD='<chosen-password>' app /computer --seed
+```
+
+This trusted command creates an admin for an allowlisted address. It never
+changes an existing account's password or role, or deletes data. Additional
+existing users can be promoted from the Admin screen.
+
+## Client test build
+
+Use [RUNNING.md](RUNNING.md) for the client handoff. Test login, bookmark editing,
+tag/contact organization, calendar dates, kanban, Markdown pages/exports, and
+sharing with separate accounts.
+
+Current integration boundaries:
+
+- Authelia still requires the developer identity-mapping work described above;
+  use email/password for this test build.
+- IMAP and Nextcloud require the client's own service credentials.
+- Alerts are browser-only and checked every five minutes while the app is open.
+- Page autosave needs an API connection. Check the save indicator; use **Save
+  now** after a failed save. Tab-local drafts are recovery aids, not backups.

@@ -9,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ExternalLink, Calendar, GripVertical, Plus, MoreHorizontal, Pencil, Trash2, ArrowLeft, ArrowRight, Check, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Bookmark } from '@/components/app-shell'
+import { fetchBookmarks } from '@/lib/bookmarks'
 
 type Column = { id: string; label: string; color: string; position: number; key: string | null }
 const PALETTE = ['#64748b', '#3b82f6', '#f59e0b', '#22c55e', '#8b5cf6', '#ec4899', '#ef4444', '#14b8a6']
@@ -33,8 +34,8 @@ export function KanbanClient() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [bRes, cRes] = await Promise.all([fetch('/api/bookmarks'), fetch('/api/kanban/columns')])
-      if (bRes.ok) setBookmarks(await bRes.json())
+      const [bookmarks, cRes] = await Promise.all([fetchBookmarks(), fetch('/api/kanban/columns')])
+      setBookmarks(bookmarks)
       if (cRes.ok) setColumns(await cRes.json())
     } catch (e) { console.error('Kanban load failed', e) }
     setLoading(false)

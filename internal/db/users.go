@@ -18,17 +18,18 @@ func (r *UserRepo) find(ctx context.Context, field, value string) (*models.User,
 	}
 	raw, _ := json.Marshal(o)
 	var row struct {
-		ID       string  `json:"id"`
-		Name     *string `json:"name"`
-		Email    *string `json:"email"`
-		Image    *string `json:"image"`
-		Password *string `json:"password"`
-		Role     string  `json:"role"`
+		ID            string  `json:"id"`
+		Name          *string `json:"name"`
+		Email         *string `json:"email"`
+		EmailVerified *string `json:"emailVerified"`
+		Image         *string `json:"image"`
+		Password      *string `json:"password"`
+		Role          string  `json:"role"`
 	}
 	if err = json.Unmarshal(raw, &row); err != nil {
 		return nil, err
 	}
-	return &models.User{ID: row.ID, Name: row.Name, Email: row.Email, Image: row.Image, Password: row.Password, Role: row.Role}, nil
+	return &models.User{ID: row.ID, Name: row.Name, Email: row.Email, EmailVerified: row.EmailVerified, Image: row.Image, Password: row.Password, Role: row.Role}, nil
 }
 func (r *UserRepo) FindByEmail(ctx context.Context, e string) (*models.User, error) {
 	return r.find(ctx, "email", e)
@@ -57,7 +58,7 @@ func (r *UserRepo) Create(ctx context.Context, u *NewUserInput) (string, error) 
 		if role == "" {
 			role = "USER"
 		}
-		if admins == 0 && !isTestEmail(u.Email) {
+		if admins == 0 && len(config.AdminEmails()) == 0 && !isTestEmail(u.Email) {
 			role = "ADMIN"
 		}
 		_, err := Insert(ctx, tx, "User", Object{"id": u.ID, "name": u.Name, "email": u.Email, "password": u.Password, "role": role})
