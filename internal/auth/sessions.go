@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/andrew/go-computer/internal/config"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -36,6 +36,9 @@ type SessionClaims struct {
 	UserID string `json:"uid"`
 	Role   string `json:"role"`
 	Type   string `json:"typ,omitempty"`
+	// Ver mirrors User.tokenVersion (≥1) for cookie sessions. Assertions and
+	// pre-revocation legacy cookies omit it, and skip the revocation check.
+	Ver int `json:"ver,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -49,6 +52,7 @@ func SignSession(u SessionUser, secret string) (string, error) {
 		UserID: u.ID,
 		Role:   u.Role,
 		Type:   TokenTypeSession,
+		Ver:    u.Ver,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(sessionMaxAge)),
@@ -66,7 +70,7 @@ func VerifySession(token, secret string) (*SessionUser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
+	return &SessionUser{ID: claims.UserID, Role: claims.Role, Ver: claims.Ver}, nil
 }
 
 func verifyClaims(token, secret string) (*SessionClaims, error) {
@@ -102,7 +106,7 @@ func ReadSession(r *http.Request, secret string) (*SessionUser, error) {
 		if claims.IssuedAt == nil || claims.ExpiresAt == nil || claims.ExpiresAt.Sub(claims.IssuedAt.Time) > maxAssertionLifetime {
 			return nil, errors.New("auth: assertion lifetime too long")
 		}
-		return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
+		return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil // assertions carry no ver; NextAuth owns their revocation
 	}
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
@@ -115,7 +119,7 @@ func ReadSession(r *http.Request, secret string) (*SessionUser, error) {
 	if claims.Type != "" && claims.Type != TokenTypeSession {
 		return nil, errors.New("auth: cookie token has wrong type")
 	}
-	return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
+	return &SessionUser{ID: claims.UserID, Role: claims.Role, Ver: claims.Ver}, nil
 }
 
 // WriteSessionCookie sets the signed session cookie on the response.
@@ -149,8 +153,10 @@ func ClearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
+// isSecure derives the cookie Secure flag from configuration: explicit
+// COOKIE_SECURE wins, otherwise an https NEXTAUTH_URL implies secure.
 func isSecure() bool {
-	return os.Getenv("COOKIE_SECURE") == "1"
+	return config.Load().CookieSecure()
 }
 
 // ErrUnauthorized is returned when there is no valid session.

@@ -100,35 +100,12 @@ These are CSS variables only — use them directly in inline styles or custom CS
 
 ## Layout Components
 
-### `Container` — `@/components/layouts/container`
-Centers content with responsive padding. Props: `size` (`sm`|`md`|`lg`|`xl`|`full`).
-```tsx
-<Container size="lg">{children}</Container>
-```
-
-### `Section` — `@/components/layouts/section`
-Vertical spacing wrapper for page sections. Props: `id`, `className`.
-```tsx
-<Section id="features">{children}</Section>
-```
-
-### `PageHeader` — `@/components/layouts/page-header`
-Title + description + action buttons. Use at top of every app page.
-```tsx
-<PageHeader title="Dashboard" description="Overview of your account" actions={<Button>Export</Button>} />
-```
-
-### `AppShell` — `@/components/layouts/app-shell`
-Sidebar + header + main content. The standard layout for dashboards and admin panels.
-```tsx
-<AppShell sidebar={<nav>...</nav>} header={<div>...</div>}>{children}</AppShell>
-```
-
-### `AuthLayout` — `@/components/layouts/auth-layout`
-Centered card on gradient background. Use for login, signup, onboarding flows.
-```tsx
-<AuthLayout title="Welcome back" description="Sign in to continue">{form}</AuthLayout>
-```
+The live app shell is `@/components/app-shell` (sidebar + top bar + main
+content, wired through `app/(app)/layout.tsx`); screens render their own
+headers inline. Login/signup use a centered card built directly in their
+route files. The generic `components/layouts/*` wrappers documented here
+previously were never imported and have been removed — reintroduce shared
+layout primitives only when a second consumer exists.
 
 ---
 

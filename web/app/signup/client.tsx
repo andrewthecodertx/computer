@@ -69,7 +69,7 @@ export function SignupClient() {
           </div>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input type="password" placeholder="Password (min 6 chars)" value={password} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)} className="pl-10" required />
+            <Input type="password" placeholder="Password (min 8 chars)" value={password} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)} className="pl-10" minLength={8} required />
           </div>
           <Button type="submit" className="w-full" loading={loading}>Create Account</Button>
         </form>

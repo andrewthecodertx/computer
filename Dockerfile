@@ -1,4 +1,5 @@
-FROM golang:1.23-alpine AS build
+# Pinned patch level; keep in lockstep with the tests service in docker-compose.yml.
+FROM golang:1.23.12-alpine3.22 AS build
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /src
 COPY go.mod go.sum ./

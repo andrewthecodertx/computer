@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"strings"
 )
@@ -48,6 +49,18 @@ func (c *Config) Secret() string {
 		return c.NextAuthSecret
 	}
 	return c.AuthSecret
+}
+
+// CookieSecure reports whether session cookies must carry the Secure flag.
+// An explicit COOKIE_SECURE setting wins; otherwise the NEXTAUTH_URL scheme
+// decides, so TLS deployments are secure by default without knowing about
+// the extra variable.
+func (c *Config) CookieSecure() bool {
+	if v := os.Getenv("COOKIE_SECURE"); v != "" {
+		return v == "1"
+	}
+	u, err := url.Parse(strings.TrimSpace(c.NextAuthURL))
+	return err == nil && u.Scheme == "https"
 }
 
 // AdminEmails splits env ADMIN_EMAILS on commas, trims, lowercases.

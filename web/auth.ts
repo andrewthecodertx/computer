@@ -6,7 +6,9 @@ import { getOidcStatus } from '@/lib/oidc-config'
 // Password verification and data ownership live in Go, not Prisma.
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
-  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
+  // Same precedence as Go (config.Secret) and lib/api.ts, so a deployment
+  // with both variables set can never sign and verify with different values.
+  secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET,
   session: { strategy: 'jwt' },
   pages: { signIn: '/login' },
   providers: [

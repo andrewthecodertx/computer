@@ -72,8 +72,12 @@ export function ContactsClient() {
             {contacts.map((c: Contact) => (
               <div
                 key={c.id}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selectedContact === c.id}
                 onClick={() => setSelectedContact(c.id)}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 cursor-pointer transition-colors ${
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedContact(c.id) } }}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-primary ${
                   selectedContact === c.id ? 'bg-accent' : 'hover:bg-muted'
                 }`}
               >

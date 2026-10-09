@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/sidebar'
@@ -71,7 +71,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.location.href = '/admin'
   }, [])
 
-  // Poll alerts
+  // Poll alerts. The API returns every un-dismissed alert on each poll, so
+  // track already-notified IDs per tab to avoid re-firing every 5 minutes.
+  const notifiedAlerts = useRef<Set<string>>(new Set())
   useEffect(() => {
     if (!session?.user) return
     const check = async () => {
@@ -80,9 +82,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         if (res.ok) {
           const data = await res.json()
           setAlerts(data ?? [])
-          // Browser notification for due alerts
           if (data?.length && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
             for (const a of data) {
+              const id = String(a?.id ?? a?.bookmarkId ?? '')
+              if (!id || notifiedAlerts.current.has(id)) continue
+              notifiedAlerts.current.add(id)
               new Notification('computer alert', { body: `${a?.title ?? 'Bookmark'} is due!`, icon: '/favicon.svg' })
             }
           }

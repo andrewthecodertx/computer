@@ -3,10 +3,10 @@ package authguard
 import (
 	"encoding/json"
 	"github.com/andrew/go-computer/internal/auth"
+	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/handlers"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -52,7 +52,7 @@ func HandleAdminViewAs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s, _ := auth.SessionFromContext(r.Context())
-	c := http.Cookie{Name: auth.ViewAsCookie, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: os.Getenv("COOKIE_SECURE") == "1", MaxAge: -1}
+	c := http.Cookie{Name: auth.ViewAsCookie, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: config.Load().CookieSecure(), MaxAge: -1}
 	if b.UserID != nil && *b.UserID != "" && *b.UserID != s.RealID {
 		if _, e := db.NewUserRepo(db.FromContext(r.Context())).FindByID(r.Context(), *b.UserID); e != nil {
 			handlers.WriteJSON(w, 404, handlers.Error{Error: "Not found"})

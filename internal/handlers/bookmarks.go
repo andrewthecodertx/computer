@@ -72,7 +72,9 @@ func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 			respond(w, 0, nil, e)
 			return
 		}
-		add(`b."dueDate"::date=$%d::date`, v)
+		// Pin both sides to UTC: bare ::date casts use the Postgres session
+		// timezone, which is not pinned and would shift "due on date X".
+		add(`(b."dueDate" AT TIME ZONE 'UTC')::date=($%d::timestamptz AT TIME ZONE 'UTC')::date`, v)
 		where = strings.Replace(where, `b."ownerId"=$2`, db.BookmarkVisible, 1)
 	}
 	where += ` AND $1::text IS NULL`

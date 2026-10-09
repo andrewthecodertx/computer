@@ -20,6 +20,7 @@ type User struct {
 	Image         *string
 	Password      *string
 	Role          string // USER | ADMIN
+	TokenVersion  int    // embedded in cookie JWTs; bumping revokes them
 	CreatedAt     string
 	UpdatedAt     string
 }

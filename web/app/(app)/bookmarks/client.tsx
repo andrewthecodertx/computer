@@ -128,7 +128,7 @@ export function BookmarksClient() {
               ) : sorted.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No bookmarks found</td></tr>
               ) : sorted.map((b: Bookmark) => (
-                <tr key={b.id} className="hover:bg-muted/30 cursor-pointer" onClick={() => setSelected(b)}>
+                <tr key={b.id} tabIndex={0} className="hover:bg-muted/30 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary" onClick={() => setSelected(b)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(b) } }}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       {b.favicon && <img src={b.favicon} alt="" className="h-4 w-4 rounded" onError={(e: any) => { e.target.style.display = 'none' }} />}

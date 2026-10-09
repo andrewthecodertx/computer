@@ -8,6 +8,7 @@ const base = process.env.BASE_URL || 'http://localhost:3000'
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] })
 const accounts = []
 const errors = []
+let testFailed = false
 const password = 'qa-test-long-password'
 const email = `qa-${Date.now()}@computer.test`
 const context = await browser.newContext()
@@ -82,10 +83,20 @@ try {
   assert.deepEqual(errors, [], 'Browser runtime errors')
   await json(await context.request.delete(`${base}/api/bookmarks/${bookmark.id}`))
   console.log('PASS: browser login, Go-backed bookmark create/edit/delete, public sharing, kanban, pages/autosave/export, all application screens')
+} catch (error) {
+  testFailed = true
+  throw error
 } finally {
   await browser.close()
   if (process.env.E2E_KEEP_DATA !== '1' && accounts.length) {
-    assert.ok(accounts.every(id => /^[a-z0-9]+$/i.test(id)))
-    execFileSync('docker', ['compose', 'exec', '-T', 'db', 'psql', '-U', 'computer', '-d', 'computer', '-v', 'ON_ERROR_STOP=1', '-c', `DELETE FROM "User" WHERE id IN (${accounts.map(id => `'${id}'`).join(',')});`], { cwd: new URL('..', import.meta.url), stdio: 'inherit' })
+    // Cleanup failures must not mask the real test error; log them and fail
+    // the run only when the tests themselves passed.
+    try {
+      assert.ok(accounts.every(id => /^[a-z0-9]+$/i.test(id)))
+      execFileSync('docker', ['compose', 'exec', '-T', 'db', 'psql', '-U', 'computer', '-d', 'computer', '-v', 'ON_ERROR_STOP=1', '-c', `DELETE FROM "User" WHERE id IN (${accounts.map(id => `'${id}'`).join(',')});`], { cwd: new URL('..', import.meta.url), stdio: 'inherit' })
+    } catch (cleanupError) {
+      console.error(`QA account cleanup failed (${accounts.join(',')}); delete manually.`, cleanupError.message)
+      if (!testFailed) process.exitCode = 1
+    }
   }
 }

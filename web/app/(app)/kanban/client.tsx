@@ -78,6 +78,17 @@ export function KanbanClient() {
     if (res.ok) { toast.success('Column deleted'); load() } else toast.error((await res.json())?.error ?? 'Could not delete')
   }
 
+  // Keyboard alternative to drag-and-drop: focus a card, Arrow Left/Right
+  // moves it to the adjacent column.
+  const moveCard = (b: Bookmark, dir: -1 | 1) => {
+    const current = columnFor(b, columns)
+    const idx = columns.findIndex(c => c.id === current)
+    const j = idx + dir
+    if (idx < 0 || j < 0 || j >= columns.length) return
+    moveToColumn(b.id, columns[j].id)
+    toast.success(`Moved to ${columns[j].label}`)
+  }
+
   const moveColumn = async (index: number, dir: -1 | 1) => {
     const next = [...columns]
     const j = index + dir
@@ -93,7 +104,7 @@ export function KanbanClient() {
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">Kanban Board</h1>
-          <p className="text-sm text-muted-foreground mt-1">Drag bookmarks between columns. Use a column’s menu to rename, recolor, reorder or delete it.</p>
+          <p className="text-sm text-muted-foreground mt-1">Drag bookmarks between columns — or focus a card and press Arrow Left/Right. Use a column’s menu to rename, recolor, reorder or delete it.</p>
         </div>
         {!adding ? (
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setAdding(true)}><Plus className="h-4 w-4" /> Add column</Button>
@@ -155,9 +166,17 @@ export function KanbanClient() {
                   <div
                     key={b.id}
                     draggable
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${b.title ?? 'Untitled'}. Enter opens details; Arrow Left or Right moves to the adjacent column.`}
                     onDragStart={e => { setDraggedId(b.id); e.dataTransfer.effectAllowed = 'move' }}
                     onClick={() => setSelectedBookmark(b)}
-                    className="rounded-lg border bg-card p-3 cursor-grab active:cursor-grabbing shadow-sm hover:shadow-md transition-shadow group"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedBookmark(b) }
+                      else if (e.key === 'ArrowLeft') { e.preventDefault(); moveCard(b, -1) }
+                      else if (e.key === 'ArrowRight') { e.preventDefault(); moveCard(b, 1) }
+                    }}
+                    className="rounded-lg border bg-card p-3 cursor-grab active:cursor-grabbing shadow-sm hover:shadow-md transition-shadow group focus-visible:outline-2 focus-visible:outline-primary"
                   >
                     <div className="flex items-start gap-2">
                       <GripVertical className="h-4 w-4 text-muted-foreground/50 mt-0.5 shrink-0" />

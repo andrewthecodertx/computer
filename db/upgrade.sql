@@ -15,4 +15,9 @@ WHERE b."imapWatchEnabled" AND NOT EXISTS (
 )
 ON CONFLICT(id) DO NOTHING;
 CREATE INDEX IF NOT EXISTS "Bookmark_ownerId_updatedAt_id_idx" ON "Bookmark"("ownerId","updatedAt" DESC,id DESC);
+-- Revocable sessions: cookie JWTs embed this version; signout bumps it.
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tokenVersion" integer NOT NULL DEFAULT 1;
+-- Query-pattern indexes: shared-date visibility join and the alerts poll.
+CREATE INDEX IF NOT EXISTS "SharedDate_creatorId_recipientId_date_idx" ON "SharedDate"("creatorId","recipientId",date);
+CREATE INDEX IF NOT EXISTS "Bookmark_ownerId_alertAt_unsent_idx" ON "Bookmark"("ownerId","alertAt") WHERE NOT "alertSent";
 COMMIT;

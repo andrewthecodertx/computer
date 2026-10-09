@@ -1,7 +1,7 @@
 name: computer
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: computer
@@ -18,7 +18,7 @@ services:
     networks: [backend]
 
   migrate:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     restart: "no"
     depends_on:
       db: {condition: service_healthy}
@@ -79,7 +79,8 @@ services:
   tests:
     profiles: [test]
     # Debian-based (not alpine): -race requires cgo, which needs gcc.
-    image: golang:1.23
+    # Keep the Go version in lockstep with the app Dockerfile.
+    image: golang:1.23.12
     depends_on:
       db: {condition: service_healthy}
     working_dir: /src

@@ -20,6 +20,7 @@ test:
 integration:
 	docker compose run --rm tests
 e2e:
+	@[ -d scripts/node_modules ] || npm --prefix scripts ci
 	npm --prefix scripts test
 logs:
 	docker compose logs -f app web

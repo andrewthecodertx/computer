@@ -492,5 +492,70 @@ the create POST (Go fetches the preview before inserting, so a cancelled
 request context aborts creation); the script now awaits the 201 response
 before navigating.
 
-Remaining next: medium-term tier (AUTH-4/5, TEST-1/2/3, WEB-6/7, API-8/DB-1,
-INFRA-5/6, WEB-14 hygiene) and the two design decisions (API-4, API-5).
+### 2026-10-09 — Medium-term tier implemented
+
+All verified: `go build`/`vet`/`test -race`, full `make integration`
+(including the new coverage/revocation/scheduler tests), web `eslint` ×2
+(0 errors; warnings 28→26 after dead-file removal), `next build` +
+TypeScript with the pruned dependency set, all 5 regressions, stack rebuild
+on pinned images + `make e2e` — all green.
+
+- **AUTH-4** ✅ `Config.CookieSecure()`: explicit `COOKIE_SECURE` wins,
+  otherwise an `https` `NEXTAUTH_URL` implies Secure. Both cookie writers
+  (session, view-as) now use it; unit-tested (`config_test.go`).
+- **AUTH-5** ✅ Revocable sessions: `"User".tokenVersion` (additive in
+  `upgrade.sql` + `schema.sql`, default 1) is embedded as a `ver` claim in
+  cookie JWTs; middleware and `/api/auth/session` reject stale versions;
+  signout bumps the version (sign-out-everywhere semantics). Assertions and
+  legacy typ-less cookies carry no `ver` and skip the check. Covered by
+  `TestSignoutRevokesIssuedTokens` (replays the pre-signout cookie).
+- **TEST-1** ✅ `coverage_test.go` closes all seven route gaps: preview
+  handler (auth + parse), bookmark markdown content, users/search (name
+  match, exact-email match, no email-substring enumeration, masked output,
+  2-rune guard), kanban column PATCH + PUT reorder happy paths, pages
+  reorder, tag delete with BookmarkTag cascade, signal-source delete.
+- **TEST-2** ✅ `signals.RunOnce` extracted from `RunLoop`;
+  `TestSignalSchedulerRunOnce` drives one tick against the in-memory IMAP
+  server and asserts signal creation, `lastStatus="Checked"`, and dedup on a
+  second tick.
+- **TEST-3** ✅ Signup requires ≥8-character passwords (UI hint updated to
+  match); `TestSignupValidation` table-tests all 400 paths without a DB.
+- **WEB-6** ✅ Kanban cards: `role=button`, `tabIndex`, Enter/Space opens,
+  Arrow Left/Right moves to the adjacent column (documented in the screen
+  subtitle). Calendar day cells, in-cell bookmark chips, contact rows, tag
+  rows and bookmark table rows got keyboard activation + focus rings.
+- **WEB-7** ✅ Due-alert browser notifications fire once per alert per tab
+  (`notifiedAlerts` ref) instead of every 5-minute poll.
+- **API-8** ✅ Date filtering pinned to UTC on both sides
+  (`AT TIME ZONE 'UTC'`) in the bookmarks list filter and the `SharedDate`
+  visibility clause.
+- **DB-1** ✅ `SharedDate(creatorId,recipientId,date)` composite and partial
+  `Bookmark(ownerId,alertAt) WHERE NOT alertSent` indexes — additive in
+  `upgrade.sql`, mirrored in `schema.sql`.
+- **INFRA-5** ✅ Images pinned to patch level (verified tags exist):
+  `golang:1.23.12-alpine3.22` (app), `golang:1.23.12` (tests),
+  `node:22.23.3-alpine3.24` (web ×3), `postgres:16.15-alpine` (db+migrate).
+  `packageManager: yarn@1.22.22` added; inert Berry-format `.yarnrc.yml`
+  deleted.
+- **INFRA-6** ✅ e2e cleanup wrapped in try/catch (cleanup failures no
+  longer mask the test error; regex guard aborts the delete instead of the
+  process); regressions retry up to 3 free ports on `EADDRINUSE`;
+  `make e2e` auto-installs `scripts/node_modules` when missing.
+- **WEB-14** ✅ Security headers (`nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy`, `Permissions-Policy`) via `next.config.js` `headers()`
+  — full CSP deferred (needs nonces for Next inline runtime). Secret
+  precedence aligned to Go's order (`NEXTAUTH_SECRET || AUTH_SECRET`) in
+  `auth.ts`. Proxy exports `HEAD`. Tag "Stop sharing" now shows the
+  recipient's name/email (Go joins the user; F24). Dead code removed after
+  import audits: `components/layouts/*` (STYLE_GUIDE.md updated),
+  `hooks/use-toast.ts`, `ui/{toast,toaster,use-toast}`, and 34 unused
+  packages (aws/azure SDKs, plotly, chart.js, mapbox, formik, yup, swr,
+  zustand, jotai, react-hot-toast, @hello-pangea/dnd, open-graph-scraper,
+  webpack, lodash, dayjs, dotenv, zod, react-is, @radix-ui/react-toast, …);
+  `react-markdown`/`remark-gfm` pinned exactly; `yarn.lock` regenerated.
+
+**Still open:** the two design decisions (API-4 tag-share visibility
+semantics, API-5 public-toggle contents) and remaining nits (AUTH-6/7,
+API-10/11 kanban O(n) delete + dead predicate, L1 tests-container `.env`
+mount, L3 default DB password, WEB-10/11 settings redirect-URI source +
+proxy origin hardening, WEB-13 shared-cache for sheet fetches, N-series).

@@ -9,4 +9,4 @@ const BookmarkView = `to_jsonb(b) || jsonb_build_object(
  'owner',(SELECT jsonb_build_object('id',u.id,'name',u.name,'email',u.email,'image',u.image) FROM "User" u WHERE u.id=b."ownerId"))`
 const BookmarkVisible = `(b."ownerId"=$2 OR EXISTS(SELECT 1 FROM "BookmarkShare" s WHERE s."bookmarkId"=b.id AND s."userId"=$2)
  OR EXISTS(SELECT 1 FROM "BookmarkTag" bt JOIN "TagShare" ts ON ts."tagId"=bt."tagId" WHERE bt."bookmarkId"=b.id AND ts."userId"=$2)
- OR EXISTS(SELECT 1 FROM "SharedDate" sd WHERE sd."creatorId"=b."ownerId" AND sd."recipientId"=$2 AND b."dueDate"::date=sd.date))`
+ OR EXISTS(SELECT 1 FROM "SharedDate" sd WHERE sd."creatorId"=b."ownerId" AND sd."recipientId"=$2 AND (b."dueDate" AT TIME ZONE 'UTC')::date=sd.date))`

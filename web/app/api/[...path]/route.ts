@@ -30,4 +30,4 @@ async function proxy(request: NextRequest) {
     return Response.json({ error: 'API unavailable' }, { status: 502 })
   }
 }
-export { proxy as GET, proxy as POST, proxy as PUT, proxy as PATCH, proxy as DELETE }
+export { proxy as GET, proxy as HEAD, proxy as POST, proxy as PUT, proxy as PATCH, proxy as DELETE }

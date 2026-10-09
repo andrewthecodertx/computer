@@ -114,8 +114,13 @@ export function CalendarClient() {
           return (
             <div
               key={key}
+              role="button"
+              tabIndex={0}
+              aria-pressed={isSelected}
+              aria-label={format(day, 'EEEE, MMMM d, yyyy')}
               onClick={() => setSelectedDay(day)}
-              className={`bg-card min-h-[80px] p-1.5 cursor-pointer transition-colors hover:bg-muted/50 ${
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedDay(day) } }}
+              className={`bg-card min-h-[80px] p-1.5 cursor-pointer transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-primary ${
                 isSelected ? 'ring-2 ring-primary ring-inset' : ''
               }`}
             >
@@ -127,7 +132,7 @@ export function CalendarClient() {
               <div className="space-y-0.5 mt-0.5">
                 {sharedDates.filter(s => s.date.slice(0, 10) === key).map(s => <p key={s.id} className="truncate text-[10px] text-primary" title={s.note || ''}>Shared: {s.creator.name || s.creator.email}</p>)}
                 {dayBookmarks.slice(0, 2).map((b: Bookmark) => (
-                  <div key={b.id} className="text-[10px] truncate rounded bg-primary/10 text-primary px-1 py-0.5 cursor-pointer" onClick={(e: React.MouseEvent) => { e.stopPropagation(); setSelectedBookmark(b) }}>
+                  <div key={b.id} role="button" tabIndex={0} className="text-[10px] truncate rounded bg-primary/10 text-primary px-1 py-0.5 cursor-pointer focus-visible:outline-1 focus-visible:outline-primary" onClick={(e: React.MouseEvent) => { e.stopPropagation(); setSelectedBookmark(b) }} onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); setSelectedBookmark(b) } }}>
                     {b.title ?? 'Untitled'}
                   </div>
                 ))}

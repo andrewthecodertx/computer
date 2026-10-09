@@ -94,10 +94,14 @@ export function TagsClient() {
           {tags.map((t: TagWithCount) => (
             <div
               key={t.id}
-              className={`flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+              role="button"
+              tabIndex={0}
+              aria-pressed={selectedTag === t.id}
+              className={`flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-primary ${
                 selectedTag === t.id ? 'bg-accent' : 'hover:bg-muted'
               }`}
               onClick={() => setSelectedTag(t.id)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedTag(t.id) } }}
             >
               {editingId === t.id ? (
                 <>
@@ -127,7 +131,7 @@ export function TagsClient() {
             {tags.find(t => t.id === selectedTag)?.ownerId === effectiveId && <div className="space-y-2 rounded border p-3">
               <Input placeholder="Share this tag with a user…" value={shareQuery} onChange={e => setShareQuery(e.target.value)} />
               {shareUsers.map(u => <Button key={u.id} size="sm" variant="outline" onClick={async () => { const res = await fetch(`/api/tags/${selectedTag}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shareUserIds: [u.id] }) }); if (!res.ok) { toast.error('Could not share tag'); return } toast.success('Tag shared'); setShareUsers([]); setShareQuery(''); loadTags() }}>Share with {u.name || u.email}</Button>)}
-              {(tags.find(t => t.id === selectedTag)?.sharedWith || []).map(share => <Button key={share.userId} size="xs" variant="ghost" onClick={async () => { const res = await fetch(`/api/tags/${selectedTag}/share/${share.userId}`, { method: 'DELETE' }); if (!res.ok) { toast.error('Could not stop sharing'); return } loadTags() }}>Stop sharing with {share.userId.slice(0, 8)}…</Button>)}
+              {(tags.find(t => t.id === selectedTag)?.sharedWith || []).map(share => <Button key={share.userId} size="xs" variant="ghost" onClick={async () => { const res = await fetch(`/api/tags/${selectedTag}/share/${share.userId}`, { method: 'DELETE' }); if (!res.ok) { toast.error('Could not stop sharing'); return } loadTags() }}>Stop sharing with {share.user?.name || share.user?.email || `${share.userId.slice(0, 8)}…`}</Button>)}
             </div>}
             {loading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -17,6 +17,7 @@ CREATE TABLE "User" (
   image text,
   password text,
   role text NOT NULL DEFAULT 'USER' CHECK (role IN ('USER','ADMIN')),
+  "tokenVersion" integer NOT NULL DEFAULT 1,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
@@ -242,4 +243,6 @@ CREATE TABLE "SharedDate" (
 CREATE INDEX "SharedDate_recipientId_idx" ON "SharedDate"("recipientId");
 CREATE INDEX "SharedDate_creatorId_idx" ON "SharedDate"("creatorId");
 CREATE INDEX "SharedDate_date_idx" ON "SharedDate"(date);
+CREATE INDEX "SharedDate_creatorId_recipientId_date_idx" ON "SharedDate"("creatorId","recipientId",date);
+CREATE INDEX "Bookmark_ownerId_alertAt_unsent_idx" ON "Bookmark"("ownerId","alertAt") WHERE NOT "alertSent";
 COMMIT;

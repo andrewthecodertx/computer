@@ -19,7 +19,7 @@ func HandleTagsList(w http.ResponseWriter, r *http.Request) {
 	   END),
 	 'sharedWith',
 	   CASE WHEN t."ownerId"=$1
-	     THEN COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM "TagShare" s WHERE s."tagId"=t.id),'[]'::jsonb)
+	     THEN COALESCE((SELECT jsonb_agg(to_jsonb(s)||jsonb_build_object('user',jsonb_build_object('id',u.id,'name',u.name,'email',u.email))) FROM "TagShare" s JOIN "User" u ON u.id=s."userId" WHERE s."tagId"=t.id),'[]'::jsonb)
 	     ELSE '[]'::jsonb
 	   END)
 	 FROM "Tag" t WHERE "ownerId"=$1 OR EXISTS(SELECT 1 FROM "TagShare" s WHERE s."tagId"=t.id AND s."userId"=$1) ORDER BY name`, user(r))

@@ -25,11 +25,12 @@ func (r *UserRepo) find(ctx context.Context, field, value string) (*models.User,
 		Image         *string `json:"image"`
 		Password      *string `json:"password"`
 		Role          string  `json:"role"`
+		TokenVersion  int     `json:"tokenVersion"`
 	}
 	if err = json.Unmarshal(raw, &row); err != nil {
 		return nil, err
 	}
-	return &models.User{ID: row.ID, Name: row.Name, Email: row.Email, EmailVerified: row.EmailVerified, Image: row.Image, Password: row.Password, Role: row.Role}, nil
+	return &models.User{ID: row.ID, Name: row.Name, Email: row.Email, EmailVerified: row.EmailVerified, Image: row.Image, Password: row.Password, Role: row.Role, TokenVersion: row.TokenVersion}, nil
 }
 func (r *UserRepo) FindByEmail(ctx context.Context, e string) (*models.User, error) {
 	return r.find(ctx, "email", e)
@@ -39,6 +40,12 @@ func (r *UserRepo) FindByID(ctx context.Context, id string) (*models.User, error
 }
 func (r *UserRepo) SetRole(ctx context.Context, id, role string) error {
 	_, err := r.db.ExecContext(ctx, `UPDATE "User" SET role=$1,"updatedAt"=now() WHERE id=$2`, role, id)
+	return err
+}
+
+// BumpTokenVersion invalidates every cookie JWT issued for the user so far.
+func (r *UserRepo) BumpTokenVersion(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE "User" SET "tokenVersion"="tokenVersion"+1,"updatedAt"=now() WHERE id=$1`, id)
 	return err
 }
 

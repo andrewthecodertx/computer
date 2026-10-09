@@ -51,6 +51,10 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, "Invalid email")
 		return
 	}
+	if len(req.Password) < 8 {
+		failure(w, 400, "Password must be at least 8 characters")
+		return
+	}
 	if len(req.Password) > 72 {
 		failure(w, 400, "Password must be at most 72 bytes")
 		return
@@ -137,7 +141,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if !isLoopback(r) {
 		loginFailures.noteSuccess(clientIP(r) + "|" + email)
 	}
-	if e = WriteSessionCookie(w, SessionUser{ID: u.ID, Role: u.Role}, config.Load().Secret()); e != nil {
+	if e = WriteSessionCookie(w, SessionUser{ID: u.ID, Role: u.Role, Ver: u.TokenVersion}, config.Load().Secret()); e != nil {
 		failure(w, 500, "Session unavailable")
 		return
 	}
@@ -152,7 +156,7 @@ func HandleAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		u, e := db.NewUserRepo(db.FromContext(r.Context())).FindByID(r.Context(), su.ID)
-		if e != nil {
+		if e != nil || (su.Ver > 0 && su.Ver != u.TokenVersion) {
 			writeJSON(w, 200, nil)
 			return
 		}
@@ -161,6 +165,14 @@ func HandleAuth(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
 			failure(w, 405, "Use POST to sign out")
 			return
+		}
+		// Revoke every cookie JWT issued for this user, not just this
+		// browser's copy: signout means "sign out everywhere".
+		if su, e := ReadSession(r, config.Load().Secret()); e == nil {
+			if e := db.NewUserRepo(db.FromContext(r.Context())).BumpTokenVersion(r.Context(), su.ID); e != nil {
+				writeJSON(w, 500, map[string]string{"error": "Unable to sign out"})
+				return
+			}
 		}
 		ClearSessionCookie(w)
 		writeJSON(w, 200, map[string]bool{"ok": true})

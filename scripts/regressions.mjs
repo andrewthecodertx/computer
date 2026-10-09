@@ -61,19 +61,35 @@ const api = http.createServer(async (req, res) => {
   } catch (error) { res.writeHead(500); res.end(String(error)) }
 })
 await new Promise(resolve => api.listen(0, '127.0.0.1', resolve))
-const portProbe = http.createServer()
-await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve))
-const port = portProbe.address().port
-await new Promise(resolve => portProbe.close(resolve))
-const base = `http://localhost:${port}`
-const web = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--port', String(port)], {
-  cwd: fileURLToPath(new URL('../web/', import.meta.url)),
-  env: { ...process.env, AUTH_SECRET: 'isolated-browser-fixture-secret', NEXTAUTH_SECRET: 'isolated-browser-fixture-secret', NEXTAUTH_URL: base, API_BASE_URL: `http://127.0.0.1:${api.address().port}`, OIDC_ISSUER: '', OIDC_CLIENT_ID: '', OIDC_CLIENT_SECRET: '' },
-  stdio: ['ignore', 'pipe', 'pipe'],
-})
+// The free-port probe is TOCTOU-racy: another process can grab the port
+// between close and `next start`. Retry up to three ports before giving up.
+let base = ''
+let web = null
 let logs = ''
-web.stdout.on('data', data => logs += data)
-web.stderr.on('data', data => logs += data)
+for (let attempt = 1; attempt <= 3; attempt++) {
+  const portProbe = http.createServer()
+  await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve))
+  const port = portProbe.address().port
+  await new Promise(resolve => portProbe.close(resolve))
+  base = `http://localhost:${port}`
+  logs = ''
+  web = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--port', String(port)], {
+    cwd: fileURLToPath(new URL('../web/', import.meta.url)),
+    env: { ...process.env, AUTH_SECRET: 'isolated-browser-fixture-secret', NEXTAUTH_SECRET: 'isolated-browser-fixture-secret', NEXTAUTH_URL: base, API_BASE_URL: `http://127.0.0.1:${api.address().port}`, OIDC_ISSUER: '', OIDC_CLIENT_ID: '', OIDC_CLIENT_SECRET: '' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  web.stdout.on('data', data => logs += data)
+  web.stderr.on('data', data => logs += data)
+  let started = false
+  for (let i = 0; i < 150; i++) {
+    try { if ((await fetch(`${base}/login`)).ok) { started = true; break } } catch { /* not up yet */ }
+    if (/EADDRINUSE/.test(logs) || web.exitCode !== null) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  if (started) break
+  web.kill('SIGKILL')
+  if (attempt === 3) assert.fail(`Next server did not start after 3 ports: ${logs}`)
+}
 const attacker = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'text/html')
   res.end(`<form method="POST" action="${base}/api/auth/login" enctype="text/plain"><input name='{"email":"attacker@computer.test","password":"password","extra":"' value='"}'></form><script>document.forms[0].submit()</script>`)

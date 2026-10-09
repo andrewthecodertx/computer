@@ -14,6 +14,10 @@ type SessionUser struct {
 	ID, Role, RealID, RealRole string
 	Name, Email                *string
 	RealUser                   map[string]any
+	// Ver is the tokenVersion embedded in a cookie JWT (0 = no claim:
+	// assertions and legacy cookies), checked against the user row so
+	// signout can revoke every issued cookie session.
+	Ver int
 }
 
 func identity(u *models.User) map[string]any {
@@ -29,6 +33,11 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		repo := db.NewUserRepo(db.FromContext(r.Context()))
 		u, e := repo.FindByID(r.Context(), s.ID)
 		if e != nil {
+			failure(w, 401, "Unauthorized")
+			return
+		}
+		// Revoked session: the cookie's tokenVersion predates a signout bump.
+		if s.Ver > 0 && s.Ver != u.TokenVersion {
 			failure(w, 401, "Unauthorized")
 			return
 		}
