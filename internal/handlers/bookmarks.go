@@ -148,6 +148,9 @@ func checkRelations(r *http.Request, tx *sql.Tx, d object, tags []string) error 
 			}
 		}
 	}
+	// A tag shared WITH you may be attached to your own bookmarks. Note the
+	// group semantics this implies (by design, see db.BookmarkVisible): the
+	// bookmark then becomes visible to every recipient of that tag.
 	for _, tag := range tags {
 		if _, e := db.One(r.Context(), tx, `SELECT to_jsonb(t) FROM "Tag" t WHERE id=$1 AND ("ownerId"=$2 OR EXISTS(SELECT 1 FROM "TagShare" s WHERE s."tagId"=t.id AND s."userId"=$2))`, tag, user(r)); e != nil {
 			return bad("Invalid tag")

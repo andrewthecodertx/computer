@@ -318,9 +318,12 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
                 {isPublic ? 'Public' : 'Private'}
               </Button>
               {isPublic && (
-                <p className="text-xs text-muted-foreground">
-                  Public link: <code className="bg-muted px-1 rounded">/share/bookmark/{bookmark?.id}</code>
-                </p>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  <p>
+                    Public link: <code className="bg-muted px-1 rounded">/share/bookmark/{bookmark?.id}</code>
+                  </p>
+                  <p>Anyone with the link sees the title, description, <span className="font-medium text-foreground">notes</span>, due date, tags and preview. Contacts, alerts and mailbox watches stay private.</p>
+                </div>
               )}
               <Input placeholder="Search users to share with..." value={shareSearch} onChange={(e: React.ChangeEvent<HTMLInputElement>) => searchUsers(e.target.value)} />
               {shareResults.map((u: any) => (

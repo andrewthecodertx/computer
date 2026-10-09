@@ -75,6 +75,11 @@ database. Do not run the initial schema against an already initialized database.
 - Kanban: custom columns, card moves, reorder; deleting a column moves cards.
 - Sharing: bookmarks, tags and calendar dates; recipients read shared content.
   Owners can revoke shares. Shared tags and dates expose the associated URLs.
+  Tag sharing is group-wide: every recipient of a tag sees all bookmarks
+  carrying it, including ones other recipients add.
+- Public bookmark links deliberately publish the title, description, notes,
+  due date, tags and preview; contacts, alerts, mailbox watches and the
+  owner identity stay private. The share panel states this before you toggle.
 - Alerts: browser notifications and in-app dismissal, polled every five minutes.
 - Nextcloud: CardDAV REPORT sync using each user's app password. Credentials
   are used for that request only, not stored.

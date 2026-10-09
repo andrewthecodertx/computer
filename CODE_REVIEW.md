@@ -634,6 +634,12 @@ upstream adapter schema), DB N4 constraint validation lock (fine at this
 scale), DB N5 tag case-folding (product decision), N8 compose.full.yml
 (harmless documented alias), users/search pg_trgm (fine at family scale).
 
-**Still open — needs product decisions:** API-4 (tag-share visibility:
-group-wide vs owner→recipient) and API-5 (whether the public toggle should
-keep publishing `notes`/`dueDate`, and how the UI should say so).
+**Resolved by product decision (2026-10-09):**
+- **API-4** ✅ Group semantics KEPT: tag sharing intentionally exposes every
+  bookmark under a shared tag to all recipients (including ones other
+  recipients add). Documented in `db.BookmarkVisible`, `checkRelations`,
+  README.md, both AGENTS.md files, and disclosed in the tags share panel UI.
+- **API-5** ✅ Public links KEEP publishing `notes` and `dueDate`. The
+  misleading "private metadata is never loaded" comment in `public.go` was
+  corrected to state the allowlist precisely, and the detail sheet's
+  public-toggle now lists exactly what a public link exposes.

@@ -7,6 +7,9 @@ const BookmarkView = `to_jsonb(b) || jsonb_build_object(
  'contact',(SELECT to_jsonb(c) FROM "Contact" c WHERE c.id=b."contactId"),
  'sharedWith',COALESCE((SELECT jsonb_agg(to_jsonb(s)||jsonb_build_object('user',jsonb_build_object('id',u.id,'name',u.name,'email',u.email))) FROM "BookmarkShare" s JOIN "User" u ON u.id=s."userId" WHERE s."bookmarkId"=b.id),'[]'::jsonb),
  'owner',(SELECT jsonb_build_object('id',u.id,'name',u.name,'email',u.email,'image',u.image) FROM "User" u WHERE u.id=b."ownerId"))`
+// BookmarkVisible binds the requesting user as $2. Tag sharing is group-wide
+// by product decision: any recipient of a tag sees every bookmark carrying
+// it, including bookmarks other recipients added. The share UI says so.
 const BookmarkVisible = `(b."ownerId"=$2 OR EXISTS(SELECT 1 FROM "BookmarkShare" s WHERE s."bookmarkId"=b.id AND s."userId"=$2)
  OR EXISTS(SELECT 1 FROM "BookmarkTag" bt JOIN "TagShare" ts ON ts."tagId"=bt."tagId" WHERE bt."bookmarkId"=b.id AND ts."userId"=$2)
  OR EXISTS(SELECT 1 FROM "SharedDate" sd WHERE sd."creatorId"=b."ownerId" AND sd."recipientId"=$2 AND (b."dueDate" AT TIME ZONE 'UTC')::date=sd.date))`
