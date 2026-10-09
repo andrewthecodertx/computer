@@ -6,6 +6,7 @@ import (
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/jackc/pgx/v5/pgconn"
+	"log"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -60,7 +61,11 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if config.IsAdminEmail(req.Email) {
-		failure(w, 403, "This administrator account must be provisioned by the operator")
+		// Indistinguishable from an existing account: a distinct error here
+		// would let any caller probe the ADMIN_EMAILS list. Logged for the
+		// operator; provisioning happens via `make seed`.
+		log.Printf("signup: rejected claim of operator-reserved address %s", req.Email)
+		failure(w, 409, "User already exists")
 		return
 	}
 	repo := db.NewUserRepo(db.FromContext(r.Context()))
@@ -99,7 +104,10 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" {
 		allowed, err := url.Parse(config.Load().NextAuthURL)
 		scheme := "http"
-		if r.TLS != nil {
+		// Behind a TLS-terminating proxy r.TLS is nil; X-Forwarded-Proto only
+		// affects the scheme half — the host must still match Origin, so this
+		// grants a spoofer nothing they control end-to-end.
+		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 			scheme = "https"
 		}
 		if origin != scheme+"://"+r.Host && (err != nil || allowed.Host == "" || origin != allowed.Scheme+"://"+allowed.Host) {

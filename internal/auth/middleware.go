@@ -41,6 +41,10 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			failure(w, 401, "Unauthorized")
 			return
 		}
+		// Promotion via ADMIN_EMAILS is persistent by design: removing an
+		// address from the env var later does NOT demote the account (use the
+		// Admin screen). Silent demotion on env drift would be worse than an
+		// extra explicit revocation step.
 		if u.Role != "ADMIN" && u.Email != nil && u.EmailVerified != nil && config.IsAdminEmail(*u.Email) {
 			if e = repo.SetRole(r.Context(), u.ID, "ADMIN"); e != nil {
 				failure(w, 500, "Unable to resolve role")

@@ -95,6 +95,11 @@ func HandlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	d["updatedAt"] = time.Now().UTC()
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
+		// Same locking discipline as page creation/reorder: serializes
+		// max(position)+1 so concurrent link adds cannot duplicate positions.
+		if e := lockUser(r, tx); e != nil {
+			return e
+		}
 		if _, e := owned(r, tx, "Page", id, "ownerId"); e != nil {
 			return e
 		}

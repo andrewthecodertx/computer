@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { User, Mail, Server, Cloud, Shield, Check, X, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
+import { invalidateReference } from '@/lib/reference-data'
 import type { OidcStatus } from '@/lib/oidc-config'
 
 export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callbackUrl: string }) {
@@ -67,7 +68,7 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
         body: JSON.stringify(ncConfig),
       })
       const data = await res.json().catch(() => null)
-      if (res.ok && data?.synced !== undefined) toast.success(`Synced ${data.synced} contacts`)
+      if (res.ok && data?.synced !== undefined) { toast.success(`Synced ${data.synced} contacts`); invalidateReference('contacts') }
       else toast.error(data?.error ?? 'Sync failed')
     } catch { toast.error('Sync failed') }
     finally { setSyncingContacts(false) }

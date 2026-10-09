@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/xml"
+	"errors"
 	"github.com/andrew/go-computer/internal/config"
 	crypt "github.com/andrew/go-computer/internal/crypto"
 	"github.com/andrew/go-computer/internal/db"
@@ -236,8 +237,12 @@ func HandleImapSave(w http.ResponseWriter, r *http.Request) {
 	var pw string
 	if m.Password == "" || m.Password == "••••••••" {
 		v, e := db.One(r.Context(), database(r), `SELECT jsonb_build_object('password',password) FROM "ImapConfig" WHERE "userId"=$1`, user(r))
-		if e != nil {
+		if errors.Is(e, db.ErrNotFound) {
 			respond(w, 0, nil, bad("Password required"))
+			return
+		}
+		if e != nil {
+			respond(w, 0, nil, e)
 			return
 		}
 		pw = str(v, "password")
@@ -263,8 +268,12 @@ func HandleImapTest(w http.ResponseWriter, r *http.Request) {
 	}
 	if m.Password == "" || m.Password == "••••••••" {
 		saved, e := signals.LoadMailbox(r.Context(), database(r), user(r))
-		if e != nil {
+		if errors.Is(e, db.ErrNotFound) {
 			respond(w, 0, nil, bad("Password required"))
+			return
+		}
+		if e != nil {
+			respond(w, 0, nil, e)
 			return
 		}
 		m.Password = saved.Password

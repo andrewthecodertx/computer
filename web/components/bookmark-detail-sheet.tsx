@@ -12,6 +12,7 @@ import type { Bookmark } from '@/components/app-shell'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { BookmarkExtras } from '@/components/bookmark-extras'
+import { fetchReference } from '@/lib/reference-data'
 import { format } from 'date-fns'
 
 interface Props {
@@ -45,12 +46,23 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
   const canEdit = !!bookmark && effectiveId === bookmark.ownerId
   useEffect(() => {
     if (!bookmark) return
-    Promise.all([fetch('/api/me'), fetch('/api/kanban/columns'), fetch('/api/contacts'), fetch('/api/tags')]).then(async ([me, cols, people, tags]) => {
-      if (me.ok) setEffectiveId((await me.json()).effectiveUser.id)
-      if (cols.ok) setColumns(await cols.json())
-      if (people.ok) setContacts(await people.json())
-      if (tags.ok) setAllTags(await tags.json())
-    }).catch(() => toast.error('Could not load bookmark options'))
+    let cancelled = false
+    // Cached + deduplicated: opening the sheet repeatedly no longer fires
+    // four identical requests each time (fetchReference never rejects).
+    ;(async () => {
+      const [me, cols, people, tags] = await Promise.all([
+        fetchReference<{ effectiveUser?: { id: string } }>('me'),
+        fetchReference<any[]>('columns'),
+        fetchReference<any[]>('contacts'),
+        fetchReference<{ id: string; name: string; color: string }[]>('tags'),
+      ])
+      if (cancelled) return
+      if (me?.effectiveUser?.id) setEffectiveId(me.effectiveUser.id)
+      if (cols) setColumns(cols)
+      if (people) setContacts(people)
+      if (tags) setAllTags(tags)
+    })()
+    return () => { cancelled = true }
   }, [bookmark])
 
   useEffect(() => {

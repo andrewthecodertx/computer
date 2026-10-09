@@ -120,25 +120,33 @@ func HandleKanbanColumnsDelete(w http.ResponseWriter, r *http.Request) {
 			return bad("A board needs at least one column")
 		}
 		dest = str(remaining[0], "id")
-		bms, e := db.Many(r.Context(), tx, `SELECT to_jsonb(b) FROM "Bookmark" b WHERE "ownerId"=$1`, user(r))
+		// Only the three columns ResolveColumnID needs, and one set-based
+		// UPDATE for the whole move instead of a round trip per bookmark.
+		bms, e := db.Many(r.Context(), tx, `SELECT jsonb_build_object('id',b.id,'kanbanColumnId',b."kanbanColumnId",'kanbanStatus',b."kanbanStatus") FROM "Bookmark" b WHERE "ownerId"=$1`, user(r))
 		if e != nil {
 			return e
 		}
+		moveIDs := make([]string, 0, len(bms))
 		for _, b := range bms {
 			if kanban.ResolveColumnID(b, cols) == id {
-				if _, e := tx.ExecContext(r.Context(), `UPDATE "Bookmark" SET "kanbanColumnId"=$1,"updatedAt"=now() WHERE id=$2`, dest, b["id"]); e != nil {
-					return e
-				}
-				moved++
+				moveIDs = append(moveIDs, str(b, "id"))
 			}
+		}
+		if len(moveIDs) > 0 {
+			if _, e := tx.ExecContext(r.Context(), `UPDATE "Bookmark" SET "kanbanColumnId"=$1,"updatedAt"=now() WHERE id=ANY($2::text[])`, dest, moveIDs); e != nil {
+				return e
+			}
+			moved = len(moveIDs)
 		}
 		if _, e := tx.ExecContext(r.Context(), `DELETE FROM "KanbanColumn" WHERE id=$1 AND "userId"=$2`, id, user(r)); e != nil {
 			return e
 		}
+		order := make([]string, len(remaining))
 		for i, c := range remaining {
-			if _, e := tx.ExecContext(r.Context(), `UPDATE "KanbanColumn" SET position=$1 WHERE id=$2`, i, c["id"]); e != nil {
-				return e
-			}
+			order[i] = str(c, "id")
+		}
+		if _, e := tx.ExecContext(r.Context(), `UPDATE "KanbanColumn" AS k SET position=t.ord-1 FROM unnest($1::text[]) WITH ORDINALITY AS t(cid,ord) WHERE k.id=t.cid`, order); e != nil {
+			return e
 		}
 		return nil
 	})

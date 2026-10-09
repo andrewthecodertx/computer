@@ -5,7 +5,6 @@ import { useSession } from 'next-auth/react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/sidebar'
 import { TopBar } from '@/components/top-bar'
-import { BookmarkDetailSheet } from '@/components/bookmark-detail-sheet'
 import { AddBookmarkDialog } from '@/components/add-bookmark-dialog'
 
 export type Bookmark = {
@@ -50,7 +49,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [selectedBookmark, setSelectedBookmark] = useState<Bookmark | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [alerts, setAlerts] = useState<any[]>([])
@@ -151,11 +149,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
-      <BookmarkDetailSheet
-        bookmark={selectedBookmark}
-        onClose={() => setSelectedBookmark(null)}
-        onUpdate={refreshPage}
-      />
       <AddBookmarkDialog
         open={addDialogOpen}
         onClose={() => setAddDialogOpen(false)}

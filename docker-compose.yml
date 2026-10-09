@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: computer
       POSTGRES_USER: computer
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-computer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
@@ -23,7 +23,7 @@ services:
     depends_on:
       db: {condition: service_healthy}
     environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:-computer}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - ./db/upgrade.sql:/upgrade.sql:ro
     command: [psql, -h, db, -U, computer, -d, computer, -v, ON_ERROR_STOP=1, -f, /upgrade.sql]
@@ -35,7 +35,7 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
     environment:
-      DATABASE_URL: postgres://computer:${POSTGRES_PASSWORD:-computer}@db:5432/computer?sslmode=disable
+      DATABASE_URL: postgres://computer:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/computer?sslmode=disable
       AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env}
       NEXTAUTH_SECRET: ${AUTH_SECRET}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
@@ -74,6 +74,13 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
+    healthcheck:
+      # busybox wget from the alpine base; /login renders without a session.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/login"]
+      interval: 10s
+      timeout: 4s
+      retries: 3
+      start_period: 20s
     networks: [backend]
 
   tests:
@@ -84,10 +91,17 @@ services:
     depends_on:
       db: {condition: service_healthy}
     working_dir: /src
-    volumes: [".:/src:ro"]
+    # Mount only what `go test ./internal/...` needs — notably NOT the repo
+    # root, so the real .env (AUTH_SECRET, POSTGRES_PASSWORD) never reaches
+    # the test process; tests set their own secrets via t.Setenv.
+    volumes:
+      - ./go.mod:/src/go.mod:ro
+      - ./go.sum:/src/go.sum:ro
+      - ./internal:/src/internal:ro
+      - ./db:/src/db:ro
     tmpfs: ["/tmp:exec"]
     environment:
-      TEST_DATABASE_URL: postgres://computer:${POSTGRES_PASSWORD:-computer}@db:5432/computer?sslmode=disable
+      TEST_DATABASE_URL: postgres://computer:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/computer?sslmode=disable
       GOCACHE: /tmp/go-cache
       GOMODCACHE: /tmp/go-mod
     command: [go, test, -race, -count=1, -v, ./internal/...]

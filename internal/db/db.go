@@ -41,7 +41,16 @@ func (d *DB) Close() error { return d.DB.Close() }
 
 type contextKey struct{}
 
-func FromContext(ctx context.Context) *DB { d, _ := ctx.Value(contextKey{}).(*DB); return d }
+// FromContext returns the request-scoped database. A missing value is a
+// wiring bug (route mounted without withDB) and must fail loudly here rather
+// than nil-panic at the first query.
+func FromContext(ctx context.Context) *DB {
+	d, ok := ctx.Value(contextKey{}).(*DB)
+	if !ok || d == nil {
+		panic("db: no database in request context (route missing withDB middleware)")
+	}
+	return d
+}
 func NewContext(ctx context.Context, d *DB) context.Context {
 	return context.WithValue(ctx, contextKey{}, d)
 }

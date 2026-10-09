@@ -10,6 +10,7 @@ import { ExternalLink, Calendar, GripVertical, Plus, MoreHorizontal, Pencil, Tra
 import { toast } from 'sonner'
 import type { Bookmark } from '@/components/app-shell'
 import { fetchBookmarks } from '@/lib/bookmarks'
+import { invalidateReference } from '@/lib/reference-data'
 
 type Column = { id: string; label: string; color: string; position: number; key: string | null }
 const PALETTE = ['#64748b', '#3b82f6', '#f59e0b', '#22c55e', '#8b5cf6', '#ec4899', '#ef4444', '#14b8a6']
@@ -59,13 +60,13 @@ export function KanbanClient() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: newLabel, color: PALETTE[columns.length % PALETTE.length] }),
     })
-    if (res.ok) { const col = await res.json(); setColumns(c => [...c, col]); setNewLabel(''); setAdding(false) }
+    if (res.ok) { const col = await res.json(); setColumns(c => [...c, col]); setNewLabel(''); setAdding(false); invalidateReference('columns') }
     else toast.error('Could not add column')
   }
 
   const saveColumn = async (id: string, data: Partial<Column>) => {
     const res = await fetch(`/api/kanban/columns/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-    if (res.ok) { const col = await res.json(); setColumns(cs => cs.map(c => c.id === id ? col : c)) }
+    if (res.ok) { const col = await res.json(); setColumns(cs => cs.map(c => c.id === id ? col : c)); invalidateReference('columns') }
     else toast.error('Could not update column')
     setEditingId(null)
   }
@@ -75,7 +76,7 @@ export function KanbanClient() {
     const dest = columns.find(c => c.id !== col.id)
     if (!confirm(`Delete "${col.label}"? Its bookmarks will move to "${dest?.label}".`)) return
     const res = await fetch(`/api/kanban/columns/${col.id}`, { method: 'DELETE' })
-    if (res.ok) { toast.success('Column deleted'); load() } else toast.error((await res.json())?.error ?? 'Could not delete')
+    if (res.ok) { toast.success('Column deleted'); invalidateReference('columns'); load() } else toast.error((await res.json())?.error ?? 'Could not delete')
   }
 
   // Keyboard alternative to drag-and-drop: focus a card, Arrow Left/Right
@@ -96,7 +97,8 @@ export function KanbanClient() {
     ;[next[index], next[j]] = [next[j], next[index]]
     setColumns(next)
     const res = await fetch('/api/kanban/columns', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order: next.map(c => c.id) }) })
-    if (!res.ok) { toast.error('Could not reorder'); load() }
+    if (res.ok) invalidateReference('columns')
+    else { toast.error('Could not reorder'); load() }
   }
 
   return (

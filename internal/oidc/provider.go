@@ -24,6 +24,7 @@ import (
 //
 //	GET /api/auth/oidc/status  ->  {enabled, issuerSet, clientIdSet, clientSecretSet, issuer}
 func HandleStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -46,6 +47,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/auth/oidc/login
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotImplemented)
 	_ = json.NewEncoder(w).Encode(map[string]string{
@@ -59,6 +61,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /api/auth/callback/authelia
 func HandleCallback(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotImplemented)
 	_ = json.NewEncoder(w).Encode(map[string]string{

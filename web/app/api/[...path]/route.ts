@@ -8,8 +8,21 @@ async function proxy(request: NextRequest) {
   const headers = new Headers()
   if (request.headers.has('content-type')) headers.set('Content-Type', request.headers.get('content-type')!)
   if (!['GET', 'HEAD'].includes(request.method)) {
+    // Defense in depth: the SameSite session cookie is the primary CSRF
+    // barrier. Origin is checked when present (parsed env origin, so a
+    // trailing slash or path in NEXTAUTH_URL cannot break the match);
+    // Sec-Fetch-Site closes the gap for mutated requests whose Origin was
+    // stripped by an intermediary. An allowlisted origin is deliberately
+    // permitted even though the browser labels it cross-site.
     const origin = request.headers.get('origin')
-    if (origin && origin !== request.nextUrl.origin && origin !== process.env.NEXTAUTH_URL) {
+    if (origin) {
+      const envUrl = process.env.NEXTAUTH_URL || process.env.AUTH_URL
+      let envOrigin: string | null = null
+      try { envOrigin = envUrl ? new URL(envUrl).origin : null } catch { envOrigin = null }
+      if (origin !== request.nextUrl.origin && origin !== envOrigin) {
+        return Response.json({ error: 'Invalid request origin' }, { status: 403 })
+      }
+    } else if (request.headers.get('sec-fetch-site') === 'cross-site') {
       return Response.json({ error: 'Invalid request origin' }, { status: 403 })
     }
   }

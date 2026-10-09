@@ -3,3 +3,9 @@
 web
 db
 *.log
+# Go build context needs only go.mod, go.sum, main.go and internal/.
+scripts
+*.md
+Makefile
+docker-compose*
+.dockerignore

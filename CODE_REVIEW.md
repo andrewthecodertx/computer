@@ -554,8 +554,86 @@ on pinned images + `make e2e` — all green.
   webpack, lodash, dayjs, dotenv, zod, react-is, @radix-ui/react-toast, …);
   `react-markdown`/`remark-gfm` pinned exactly; `yarn.lock` regenerated.
 
-**Still open:** the two design decisions (API-4 tag-share visibility
-semantics, API-5 public-toggle contents) and remaining nits (AUTH-6/7,
-API-10/11 kanban O(n) delete + dead predicate, L1 tests-container `.env`
-mount, L3 default DB password, WEB-10/11 settings redirect-URI source +
-proxy origin hardening, WEB-13 shared-cache for sheet fetches, N-series).
+### 2026-10-09 — Low/nit backlog implemented
+
+All verified: `go build`/`vet`/`test -race`, full `make integration`
+(115s, race-enabled, restricted tests mount), web `eslint` ×2 (0 errors),
+`next build` + TypeScript, all 5 regressions, stack rebuild + `make e2e`
+(web now reports healthy via its new healthcheck) — all green.
+
+- **AUTH-6** ✅ Signup against an `ADMIN_EMAILS` address now returns the
+  same 409 "User already exists" as a duplicate (no probing oracle) and is
+  logged server-side; `security_test.go` updated to assert 409.
+- **AUTH-7** ✅ Documented as intended behavior (comment in
+  `middleware.go`): promotion is persistent; removal from `ADMIN_EMAILS`
+  does not demote — revocation is an explicit Admin-screen action.
+- **AUTH-11** ✅ Login Origin scheme detection honors `X-Forwarded-Proto`
+  behind TLS-terminating proxies (host must still match, so the header
+  grants a spoofer nothing end-to-end).
+- **API-10** ✅ Kanban column delete: loads only
+  `id/kanbanColumnId/kanbanStatus` (was full-row JSON incl. notes/OG
+  metadata), moves cards with one `UPDATE ... WHERE id=ANY(...)`, and
+  repositions remaining columns with a single `unnest ... WITH ORDINALITY`
+  statement — O(round trips) no longer scales with bookmark count while
+  holding the user-row lock.
+- **API-11 nits** ✅ Dead `$1::text IS NULL` predicate explained in place
+  (renumbering would touch `db.BookmarkVisible`'s fixed `$2` convention
+  everywhere); `kanban.GetColumns` fast-paths the common read outside any
+  transaction (lock+seed only when count is zero, re-checked inside);
+  IMAP save/test distinguish `db.ErrNotFound` (400 "Password required")
+  from real DB/decrypt failures (logged 500); `PageBookmark` position
+  insert now takes `lockUser` like every other position-assigning write;
+  OIDC status/login/callback set `Cache-Control: no-store`.
+- **AUTH-12 (partial)** ✅ `db.FromContext` panics with a clear
+  "route missing withDB middleware" message instead of returning nil;
+  `srv.Shutdown` error logging (previous batch). Per-request `config.Load`
+  injection deferred (stylistic).
+- **DB N1** ✅ `SignalSource.config` is `jsonb` (schema.sql for new
+  installs; idempotent `ALTER ... TYPE jsonb USING config::jsonb` in
+  upgrade.sql — migration_test runs it twice).
+- **DB N2** ✅ Verified no writer can produce NULL `sourceId`
+  (`RunSignalChecks` always sets it), so `UNIQUE(sourceId,externalId)`
+  dedup is safe as-is; no change needed.
+- **WEB-9** ✅ Dead shell-level `BookmarkDetailSheet` and its unreachable
+  state removed from `app-shell.tsx` (screens mount their own sheets).
+- **WEB-10** ✅ Settings Authelia redirect URI derives from
+  `NEXTAUTH_URL`/`AUTH_URL` (same value `auth.ts` trusts); forwarded-header
+  inference only as a dev fallback (`NODE_ENV !== 'production'`).
+- **WEB-11** ✅ Proxy origin check parses the env URL (trailing
+  slash/path can no longer break the match, `AUTH_URL` honored) and
+  rejects `Sec-Fetch-Site: cross-site` when Origin is absent — while still
+  permitting an explicitly allowlisted cross-origin.
+- **WEB-13** ✅ New `lib/reference-data.ts`: 30s-TTL, in-flight-deduped,
+  never-rejecting cache for the detail sheet's four reference fetches
+  (`me`/columns/contacts/tags); failures aren't cached. Invalidated at
+  every mutation site (tags screen reloads, dialog tag creation, settings
+  contacts sync, all four kanban column mutations). Sheet opens now fire
+  ~0-2 requests instead of 6.
+- **L1** ✅ Compose `tests` service mounts only `go.mod`, `go.sum`,
+  `internal/`, `db/` — the real `.env` (AUTH_SECRET, POSTGRES_PASSWORD) no
+  longer reaches the test process.
+- **L3** ✅ `POSTGRES_PASSWORD` now uses fail-fast `:?` interpolation like
+  `AUTH_SECRET` (no silent `computer` default); `.env` was already
+  mandatory for compose because of the AUTH_SECRET guard, so no workflow
+  changes. `.env.example` documents it.
+- **L7** ✅ `.dockerignore` excludes `scripts/` (14MB node_modules),
+  `*.md`, `Makefile`, compose files from the Go build context.
+- **N6** ✅ `.env.example` documents `PORT`, `DB_URL`,
+  `TEST_DATABASE_URL`, `BASE_URL`, `CHROMIUM_PATH`, `E2E_KEEP_DATA`,
+  `INTEGRATIONS_ALLOW_PRIVATE` (with a never-in-production warning) and
+  the compose fail-fast interpolation behavior.
+- **N9** ✅ `web` service healthcheck (`wget` on `/login`, start_period
+  20s); `docker compose ps` now shows web health.
+
+**Deferred with rationale:** AUTH-10 key separation (only meaningful
+during a re-encryption migration), N1 config injection (stylistic),
+N2 HandleAuth method switch (harmless), WEB-14 keepalive >60KB (drafts +
+beforeunload guard mitigate), WEB-15 calendar INITIAL_DATE (hydration-safe;
+mount effect corrects immediately), DB N3 int4 expires_at (matches
+upstream adapter schema), DB N4 constraint validation lock (fine at this
+scale), DB N5 tag case-folding (product decision), N8 compose.full.yml
+(harmless documented alias), users/search pg_trgm (fine at family scale).
+
+**Still open — needs product decisions:** API-4 (tag-share visibility:
+group-wide vs owner→recipient) and API-5 (whether the public toggle should
+keep publishing `notes`/`dueDate`, and how the UI should say so).

@@ -77,6 +77,9 @@ func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 		add(`(b."dueDate" AT TIME ZONE 'UTC')::date=($%d::timestamptz AT TIME ZONE 'UTC')::date`, v)
 		where = strings.Replace(where, `b."ownerId"=$2`, db.BookmarkVisible, 1)
 	}
+	// Port artifact: db.BookmarkVisible binds the user as $2, so $1 stays a
+	// permanently-nil placeholder and this predicate is always true. Removing
+	// it would require renumbering BookmarkVisible's parameters everywhere.
 	where += ` AND $1::text IS NULL`
 	if raw := sp.Get("cursor"); raw != "" {
 		var cursor struct {

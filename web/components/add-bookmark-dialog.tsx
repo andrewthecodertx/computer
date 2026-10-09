@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Link2, Loader2, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { invalidateReference } from '@/lib/reference-data'
 
 interface Props {
   open: boolean
@@ -91,6 +92,7 @@ export function AddBookmarkDialog({ open, onClose, onCreated }: Props) {
         setTags(prev => [...prev, { id: tag.id, name: tag.name, color: tag.color }])
         setAllTags(prev => [...prev, tag])
         setNewTagName('')
+        invalidateReference('tags')
       }
     } catch { /* ignore */ }
   }, [newTagName])

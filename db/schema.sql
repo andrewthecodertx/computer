@@ -198,7 +198,7 @@ CREATE INDEX "PageBookmark_bookmarkId_idx" ON "PageBookmark"("bookmarkId");
 CREATE TABLE "SignalSource" (
   id text PRIMARY KEY,
   type text NOT NULL,
-  config json NOT NULL DEFAULT '{}',
+  config jsonb NOT NULL DEFAULT '{}',
   enabled boolean NOT NULL DEFAULT true,
   "lastCheckedAt" timestamptz,
   "lastStatus" text,

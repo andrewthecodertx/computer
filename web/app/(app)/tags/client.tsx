@@ -10,6 +10,7 @@ import { Plus, Tags, Trash2, Edit, Check, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Bookmark, TagWithCount } from '@/components/app-shell'
 import { fetchBookmarks } from '@/lib/bookmarks'
+import { invalidateReference } from '@/lib/reference-data'
 
 export function TagsClient() {
   const [tags, setTags] = useState<TagWithCount[]>([])
@@ -41,6 +42,9 @@ export function TagsClient() {
   }, [shareQuery])
 
   const loadTags = useCallback(async () => {
+    // Every tag mutation reloads through here; keep the detail sheet's cache
+    // in step so new/renamed tags appear in its picker immediately.
+    invalidateReference('tags')
     try {
       const res = await fetch('/api/tags')
       if (res.ok) setTags(await res.json())
