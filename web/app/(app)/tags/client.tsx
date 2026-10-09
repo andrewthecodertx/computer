@@ -27,9 +27,24 @@ export function TagsClient() {
   const [shareUsers, setShareUsers] = useState<any[]>([])
   useEffect(() => { fetch('/api/me').then(r => r.json()).then(me => setEffectiveId(me.effectiveUser?.id || '')).catch(() => {}) }, [])
 
+  // Debounced user search; failures keep the previous results silently.
+  useEffect(() => {
+    const q = shareQuery.trim()
+    const t = setTimeout(async () => {
+      if (q.length < 2) { setShareUsers([]); return }
+      try {
+        const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`)
+        if (res.ok) setShareUsers(await res.json())
+      } catch { /* transient; retried on next keystroke */ }
+    }, q.length < 2 ? 0 : 250)
+    return () => clearTimeout(t)
+  }, [shareQuery])
+
   const loadTags = useCallback(async () => {
-    const res = await fetch('/api/tags')
-    if (res.ok) setTags(await res.json())
+    try {
+      const res = await fetch('/api/tags')
+      if (res.ok) setTags(await res.json())
+    } catch { toast.error('Could not load tags') }
   }, [])
 
   const loadBookmarks = useCallback(async (tagId: string) => {
@@ -110,7 +125,7 @@ export function TagsClient() {
           <div className="space-y-4">
             <h2 className="font-medium">Bookmarks tagged: <Badge style={{ backgroundColor: `${tags.find(t => t.id === selectedTag)?.color ?? '#6366f1'}20`, color: tags.find(t => t.id === selectedTag)?.color }}>{tags.find(t => t.id === selectedTag)?.name}</Badge></h2>
             {tags.find(t => t.id === selectedTag)?.ownerId === effectiveId && <div className="space-y-2 rounded border p-3">
-              <Input placeholder="Share this tag with a user…" value={shareQuery} onChange={async e => { const q = e.target.value; setShareQuery(q); if (q.length < 2) { setShareUsers([]); return } const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`); if (res.ok) setShareUsers(await res.json()) }} />
+              <Input placeholder="Share this tag with a user…" value={shareQuery} onChange={e => setShareQuery(e.target.value)} />
               {shareUsers.map(u => <Button key={u.id} size="sm" variant="outline" onClick={async () => { const res = await fetch(`/api/tags/${selectedTag}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shareUserIds: [u.id] }) }); if (!res.ok) { toast.error('Could not share tag'); return } toast.success('Tag shared'); setShareUsers([]); setShareQuery(''); loadTags() }}>Share with {u.name || u.email}</Button>)}
               {(tags.find(t => t.id === selectedTag)?.sharedWith || []).map(share => <Button key={share.userId} size="xs" variant="ghost" onClick={async () => { const res = await fetch(`/api/tags/${selectedTag}/share/${share.userId}`, { method: 'DELETE' }); if (!res.ok) { toast.error('Could not stop sharing'); return } loadTags() }}>Stop sharing with {share.userId.slice(0, 8)}…</Button>)}
             </div>}

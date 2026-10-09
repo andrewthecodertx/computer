@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Calendar, Tags, Users, Kanban, Link2, Settings, ChevronLeft, ChevronRight, FileText, Pin, Plus, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { toast } from 'sonner'
 import { PAGES_CHANGED, nextUntitledTitle, notifyPagesChanged, type PageSummary } from '@/lib/pages'
 
 // Screens below are filters/views over the same bookmark collection, not
@@ -67,11 +68,13 @@ function SidebarNav({ open, pathname, isAdmin = false }: { open: boolean; pathna
 
   const createPage = async () => {
     const title = nextUntitledTitle(pages.map((p) => p.title))
-    const res = await fetch('/api/pages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })
-    if (!res.ok) return
-    const p = await res.json()
-    notifyPagesChanged()
-    router.push(`/pages?id=${p.id}`)
+    try {
+      const res = await fetch('/api/pages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })
+      if (!res.ok) { toast.error('Could not create page'); return }
+      const p = await res.json()
+      notifyPagesChanged()
+      router.push(`/pages?id=${p.id}`)
+    } catch { toast.error('Could not create page') }
   }
 
   const filterEntries = isAdmin

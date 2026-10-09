@@ -445,6 +445,52 @@ stack rebuild + `make e2e` — all green):
 (assertions without `typ`) against a new Go rejects all Bearer auth. Compose
 rebuilds both, so `docker compose up -d --build` is sufficient.
 
-Remaining from the immediate tier: none. Next up per the action plan: the
-short-term tier (WEB-1 SSR session, WEB-5 UTC dates, WEB-2/3/4 fetch
-resilience, API-3/API-6 privacy scoping, INFRA-1/INFRA-3).
+Remaining from the immediate tier: none.
+
+### 2026-10-08 — Short-term tier implemented
+
+All verified: `go build`/`vet`/`test -race`, full `make integration` (now
+with `-race`), web `eslint` ×2 configs (0 errors), `next build` + TypeScript,
+all 5 regressions, stack rebuild + `make e2e` — all green.
+
+- **WEB-1** ✅ `(app)/layout.tsx` passes the server session through
+  `AppShellWrapper` into a nested `<SessionProvider session={...}>`, so the
+  signed-in shell and screens are server-rendered instead of discarded.
+- **WEB-5** ✅ `timeZone: 'UTC'` added on the public share page, bookmark
+  card, and bookmarks table; `no-bare-locale-format` in `eslint.ssr.config.mjs`
+  now flags any `toLocaleDateString`/`toLocaleTimeString` call whose options
+  lack `timeZone` (`toLocaleString` exempt — Numbers accept it without
+  timeZone).
+- **WEB-2** ✅ Bookmark search rewritten: 250 ms debounce, `AbortController`
+  per load (using `fetchBookmarks`' previously unused `signal` param),
+  sequence guard so stale responses can't clobber newer results, shared-tab
+  list loaded once instead of per keystroke. **WEB-8** fixed en passant:
+  delete checks `res.ok` before toasting success.
+- **WEB-3/WEB-4** ✅ `try/catch/finally` sweep: settings IMAP save/test and
+  Nextcloud sync (spinners can no longer stick; non-JSON bodies tolerated),
+  contacts loader, login `signIn` rejection, sidebar `createPage`, app-shell
+  `exitViewAs`/`dismissAlert` (alert now removed only on success), pages
+  link-search effect; calendar/tags user search debounced (250 ms) with
+  error-tolerant fetches.
+- **API-3** ✅ `HandleTagsList`: `sharedWith` and the owner-wide `_count` are
+  now owner-only (`CASE WHEN t."ownerId"=$1`); recipients see their own usage
+  count and an empty share list.
+- **API-6** ✅ `HandleUsersSearch`: emails must match exactly (no substring
+  enumeration), names still `ILIKE`; returned emails are masked
+  (`a***@domain`).
+- **INFRA-1** ✅ Compose `tests` service switched to `golang:1.23` (Debian —
+  alpine lacks gcc for `-race`) and runs `go test -race`; `make test` prints a
+  loud skip warning when `TEST_DATABASE_URL` is unset.
+- **INFRA-3** ✅ `web/prisma/` deleted; `prisma`, `@prisma/client`,
+  `@auth/prisma-adapter` removed from `web/package.json` and `yarn.lock`
+  regenerated (0 prisma entries); `web/.env.example` rewritten to the real
+  web-app variables (no phantom `DATABASE_URL`); `web/README.md` setup and
+  layout sections corrected.
+
+E2e script hardened during verification: the save-then-navigate step raced
+the create POST (Go fetches the preview before inserting, so a cancelled
+request context aborts creation); the script now awaits the 201 response
+before navigating.
+
+Remaining next: medium-term tier (AUTH-4/5, TEST-1/2/3, WEB-6/7, API-8/DB-1,
+INFRA-5/6, WEB-14 hygiene) and the two design decisions (API-4, API-5).

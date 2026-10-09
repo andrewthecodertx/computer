@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -20,22 +20,44 @@ export function BookmarksClient() {
   const [sortField, setSortField] = useState<'title' | 'updatedAt' | 'kanbanStatus'>('updatedAt')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
-  const load = useCallback(async () => {
+  // Debounced, abortable, sequence-guarded load: a slow response for an older
+  // query can never overwrite newer results (same discipline as pages client).
+  const loadSeq = useRef(0)
+  const abortRef = useRef<AbortController | null>(null)
+  const load = useCallback(() => {
+    abortRef.current?.abort()
+    const ac = new AbortController()
+    abortRef.current = ac
+    const seq = ++loadSeq.current
     setLoading(true)
     const params = new URLSearchParams()
     if (search) params.set('search', search)
-    try {
-      const [mine, shared] = await Promise.all([
-        fetchBookmarks(params),
-        fetchBookmarks(new URLSearchParams({ shared: 'true' })),
-      ])
-      setBookmarks(mine ?? [])
-      setSharedBookmarks(shared ?? [])
-    } catch { toast.error('Could not load bookmarks') }
-    finally { setLoading(false) }
+    ;(async () => {
+      try {
+        const mine = await fetchBookmarks(params, ac.signal)
+        if (seq !== loadSeq.current) return
+        setBookmarks(mine ?? [])
+      } catch {
+        if (seq === loadSeq.current && !ac.signal.aborted) toast.error('Could not load bookmarks')
+      } finally {
+        if (seq === loadSeq.current) setLoading(false)
+      }
+    })()
   }, [search])
 
-  useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])
+  // The shared list is not search-filtered; load it once and on changes only.
+  const loadShared = useCallback(async () => {
+    try { setSharedBookmarks(await fetchBookmarks(new URLSearchParams({ shared: 'true' })) ?? []) }
+    catch { /* the mine-tab load surfaces errors */ }
+  }, [])
+
+  useEffect(() => {
+    const timer = setTimeout(load, search ? 250 : 0)
+    const reload = () => { load(); void loadShared() }
+    window.addEventListener('computer:bookmarks-changed', reload)
+    return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', reload); abortRef.current?.abort() }
+  }, [load, loadShared, search])
+  useEffect(() => { const timer = setTimeout(loadShared, 0); return () => clearTimeout(timer) }, [loadShared])
   // Top-bar search lands here (this view replaced the old dashboard).
   useEffect(() => {
     const timer = setTimeout(() => setSearch(new URLSearchParams(window.location.search).get('search') || ''), 0)
@@ -126,12 +148,12 @@ export function BookmarksClient() {
                     </div>
                   </td>
                   <td className="px-4 py-3"><Badge variant="outline" className="text-[10px]">{b.kanbanStatus?.replace('_', ' ')}</Badge></td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(b.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
+                  <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(b.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                       <a href={b.url} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-4 w-4 text-muted-foreground hover:text-primary" /></a>
                       {tab === 'mine' && (
-                        <button onClick={async () => { if (confirm('Delete?')) { await fetch(`/api/bookmarks/${b.id}`, { method: 'DELETE' }); toast.success('Deleted'); load() } }}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></button>
+                        <button onClick={async () => { if (!confirm('Delete?')) return; try { const res = await fetch(`/api/bookmarks/${b.id}`, { method: 'DELETE' }); if (res.ok) { toast.success('Deleted'); load() } else toast.error('Could not delete bookmark') } catch { toast.error('Could not delete bookmark') } }}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></button>
                       )}
                     </div>
                   </td>

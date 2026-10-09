@@ -12,6 +12,10 @@ build:
 vet:
 	go vet ./internal/... .
 test:
+	@if [ -z "$$TEST_DATABASE_URL" ]; then \
+		echo "warning: TEST_DATABASE_URL is unset - PostgreSQL integration tests will SKIP."; \
+		echo "         run 'make integration' for full coverage."; \
+	fi
 	go test -race ./internal/...
 integration:
 	docker compose run --rm tests

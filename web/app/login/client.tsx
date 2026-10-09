@@ -21,13 +21,19 @@ export function LoginClient({ oidcEnabled }: { oidcEnabled: boolean }) {
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    const result = await signIn('credentials', { email, password, redirect: false })
-    if (result?.ok) {
-      router.push('/pages')
-    } else {
-      toast.error('Invalid credentials')
+    try {
+      // signIn with redirect:false still rejects on network failures.
+      const result = await signIn('credentials', { email, password, redirect: false })
+      if (result?.ok) {
+        router.push('/pages')
+      } else {
+        toast.error('Invalid credentials')
+      }
+    } catch {
+      toast.error('Sign-in failed; check your connection')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (

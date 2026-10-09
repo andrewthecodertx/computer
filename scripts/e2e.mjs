@@ -33,7 +33,12 @@ try {
   const dialog = page.getByRole('dialog')
   await dialog.getByPlaceholder('https://...').fill('https://example.org/browser-qa')
   await dialog.getByPlaceholder('Auto-filled from URL').fill('Browser QA bookmark')
+  // Wait for the create to land server-side; navigating earlier cancels the
+  // in-flight POST (Go fetches the preview before inserting, so a cancelled
+  // request context aborts creation).
+  const saved = page.waitForResponse(r => r.url().includes('/api/bookmarks') && r.request().method() === 'POST' && r.status() === 201)
   await dialog.getByRole('button', { name: 'Save Bookmark', exact: true }).click()
+  await saved
   await page.goto(`${base}/bookmarks`)
   await page.getByText('Browser QA bookmark', { exact: true }).first().waitFor()
   let bookmarks = await json(await context.request.get(`${base}/api/bookmarks`))

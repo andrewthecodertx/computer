@@ -13,18 +13,18 @@ mailbox watching, and can be shared.
 
 - Node.js 20.9 or newer
 - Yarn (Corepack: `corepack enable`)
-- PostgreSQL 13 or newer
+- A running Go API (`API_BASE_URL`) — the frontend has no database access
 
 ## Setup
 
 ```bash
-cp .env.example .env          # fill in DATABASE_URL, secrets, NEXTAUTH_URL
+cp .env.example .env          # fill in AUTH_SECRET, NEXTAUTH_URL, API_BASE_URL
 yarn install
-yarn prisma generate
-yarn prisma db push           # creates or updates the tables (non-destructive)
-# optional first user:
-SEED_EMAIL=you@example.org SEED_PASSWORD='choose-one' yarn prisma db seed
 ```
+
+The original pre-port application used Prisma against PostgreSQL directly;
+that layer is gone. Schema and seeding now live in the Go stack
+(`../db/schema.sql`, `../db/upgrade.sql`, `make seed`).
 
 ## Run
 
@@ -51,8 +51,7 @@ reverse proxy (Caddy, nginx) for HTTPS.
 | `app/api/` | API routes: bookmarks, tags, sharing, preview, contacts sync, IMAP, alerts |
 | `app/share/bookmark/[id]` | Public read-only bookmark page |
 | `components/` | UI components |
-| `lib/` | Prisma client, crypto (IMAP passwords), OIDC config, helpers |
-| `prisma/schema.prisma` | Database schema |
+| `lib/` | Server-side API bridge (`api.ts`), OIDC config, autosave/pagination helpers |
 | `auth.ts` | Auth.js configuration |
 | `docs/` | Integration docs |
 

@@ -28,9 +28,11 @@ export function ContactsClient() {
 
   const loadContacts = useCallback(async () => {
     setLoading(true)
-    const res = await fetch('/api/contacts')
-    if (res.ok) setContacts(await res.json())
-    setLoading(false)
+    try {
+      const res = await fetch('/api/contacts')
+      if (res.ok) setContacts(await res.json())
+    } catch { toast.error('Could not load contacts') }
+    finally { setLoading(false) }
   }, [])
 
   const loadBookmarks = useCallback(async (contactId: string) => {

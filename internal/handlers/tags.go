@@ -8,8 +8,21 @@ import (
 	"time"
 )
 
+// Sharing metadata (share list, total usage) belongs to the owner alone;
+// recipients see the tag plus only their own usage count.
 func HandleTagsList(w http.ResponseWriter, r *http.Request) {
-	v, e := db.Many(r.Context(), database(r), `SELECT to_jsonb(t)||jsonb_build_object('_count',jsonb_build_object('bookmarks',(SELECT count(*) FROM "BookmarkTag" bt WHERE bt."tagId"=t.id)),'sharedWith',COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM "TagShare" s WHERE s."tagId"=t.id),'[]'::jsonb)) FROM "Tag" t WHERE "ownerId"=$1 OR EXISTS(SELECT 1 FROM "TagShare" s WHERE s."tagId"=t.id AND s."userId"=$1) ORDER BY name`, user(r))
+	v, e := db.Many(r.Context(), database(r), `SELECT to_jsonb(t)||jsonb_build_object(
+	 '_count',jsonb_build_object('bookmarks',
+	   CASE WHEN t."ownerId"=$1
+	     THEN (SELECT count(*) FROM "BookmarkTag" bt WHERE bt."tagId"=t.id)
+	     ELSE (SELECT count(*) FROM "BookmarkTag" bt JOIN "Bookmark" b ON b.id=bt."bookmarkId" WHERE bt."tagId"=t.id AND b."ownerId"=$1)
+	   END),
+	 'sharedWith',
+	   CASE WHEN t."ownerId"=$1
+	     THEN COALESCE((SELECT jsonb_agg(to_jsonb(s)) FROM "TagShare" s WHERE s."tagId"=t.id),'[]'::jsonb)
+	     ELSE '[]'::jsonb
+	   END)
+	 FROM "Tag" t WHERE "ownerId"=$1 OR EXISTS(SELECT 1 FROM "TagShare" s WHERE s."tagId"=t.id AND s."userId"=$1) ORDER BY name`, user(r))
 	respond(w, 200, v, e)
 }
 func tagData(b object) (object, error) {

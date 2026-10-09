@@ -62,7 +62,7 @@ export function PublicBookmarkView({ bookmark }: { bookmark: any }) {
             <span className="flex items-center gap-1"><User className="h-4 w-4" /> Shared by {bookmark.owner.name}</span>
           )}
           {bookmark?.dueDate && (
-            <span className="flex items-center gap-1"><Calendar className="h-4 w-4" /> {new Date(bookmark.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+            <span className="flex items-center gap-1"><Calendar className="h-4 w-4" /> {new Date(bookmark.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>
           )}
         </div>
       </main>

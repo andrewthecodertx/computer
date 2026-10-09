@@ -23,29 +23,35 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
     }).catch(() => {})
   }, [])
 
+  // Every action clears its spinner in finally and tolerates non-JSON or
+  // failed network responses, so no state can stick after an outage.
   const saveImap = async () => {
     setSavingImap(true)
-    const res = await fetch('/api/settings/imap', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(imapConfig),
-    })
-    if (res.ok) toast.success('IMAP settings saved')
-    else toast.error('Failed to save')
-    setSavingImap(false)
+    try {
+      const res = await fetch('/api/settings/imap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(imapConfig),
+      })
+      if (res.ok) toast.success('IMAP settings saved')
+      else toast.error((await res.json().catch(() => null))?.error ?? 'Failed to save')
+    } catch { toast.error('Failed to save') }
+    finally { setSavingImap(false) }
   }
 
   const testImap = async () => {
     setTestingImap(true)
-    const res = await fetch('/api/imap/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(imapConfig),
-    })
-    const data = await res.json()
-    if (data?.ok) toast.success('Connection successful!')
-    else toast.error(data?.error ?? 'Connection failed')
-    setTestingImap(false)
+    try {
+      const res = await fetch('/api/imap/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(imapConfig),
+      })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.ok) toast.success('Connection successful!')
+      else toast.error(data?.error ?? 'Connection failed')
+    } catch { toast.error('Connection failed') }
+    finally { setTestingImap(false) }
   }
 
   const syncContacts = async () => {
@@ -54,15 +60,17 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
       return
     }
     setSyncingContacts(true)
-    const res = await fetch('/api/contacts/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(ncConfig),
-    })
-    const data = await res.json()
-    if (data?.synced !== undefined) toast.success(`Synced ${data.synced} contacts`)
-    else toast.error(data?.error ?? 'Sync failed')
-    setSyncingContacts(false)
+    try {
+      const res = await fetch('/api/contacts/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ncConfig),
+      })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.synced !== undefined) toast.success(`Synced ${data.synced} contacts`)
+      else toast.error(data?.error ?? 'Sync failed')
+    } catch { toast.error('Sync failed') }
+    finally { setSyncingContacts(false) }
   }
 
   return (

@@ -93,12 +93,29 @@ const ssrPlugin = {
         schema: [],
       },
       create(context) {
+        const DATE_METHODS = new Set(['toLocaleDateString', 'toLocaleTimeString'])
+        function hasTimeZone(node) {
+          return node.arguments.some((arg) =>
+            arg.type === 'ObjectExpression' &&
+            arg.properties.some((p) => p.type === 'Property' && !p.computed && ((p.key.type === 'Identifier' && p.key.name === 'timeZone') || (p.key.type === 'Literal' && p.key.value === 'timeZone'))))
+        }
         return {
           CallExpression(node) {
-            if (node.callee.type === 'MemberExpression' && !node.callee.computed && node.callee.property.type === 'Identifier' && LOCALE_METHODS.has(node.callee.property.name) && node.arguments.length === 0) {
+            if (node.callee.type !== 'MemberExpression' || node.callee.computed || node.callee.property.type !== 'Identifier' || !LOCALE_METHODS.has(node.callee.property.name)) return
+            if (node.arguments.length === 0) {
               context.report({
                 node,
                 message: `\`${node.callee.property.name}()\` without arguments uses the runtime's locale/timezone, which differs between server and client (hydration mismatch). Pass an explicit locale (and timeZone for dates), e.g. ('en-US', { timeZone: 'UTC' }), or use <SafeDate>/<SafeTime>/<SafeNumber> from components/safe-format.tsx.`,
+              })
+              return
+            }
+            // Date-only/time values stored in UTC render one day off (and can
+            // mismatch SSR) unless the timezone is pinned. toLocaleString is
+            // excluded: Numbers accept it too and cannot take timeZone.
+            if (DATE_METHODS.has(node.callee.property.name) && !hasTimeZone(node)) {
+              context.report({
+                node,
+                message: `\`${node.callee.property.name}()\` without a timeZone option renders in the runtime's timezone, which differs between server (UTC) and client (hydration mismatch, off-by-one dates). Add { timeZone: 'UTC' } or use <SafeDate>/<SafeTime> from components/safe-format.tsx.`,
               })
             }
           },

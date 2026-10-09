@@ -41,7 +41,10 @@ func HandleUsersSearch(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, []object{}, nil)
 		return
 	}
-	v, e := db.Many(r.Context(), database(r), `SELECT jsonb_build_object('id',id,'name',name,'email',email,'image',image) FROM "User" WHERE id<>$1 AND (name ILIKE $2 OR email ILIKE $2) ORDER BY name LIMIT 10`, user(r), "%"+q+"%")
+	// The share picker needs names and IDs; substring matching on emails would
+	// let any user enumerate the whole user base, so emails must match exactly
+	// and are returned masked.
+	v, e := db.Many(r.Context(), database(r), `SELECT jsonb_build_object('id',id,'name',name,'email',CASE WHEN position('@' in email)=0 THEN NULL ELSE left(email,1)||'***'||substr(email from position('@' in email)) END,'image',image) FROM "User" WHERE id<>$1 AND (name ILIKE $2 OR lower(email)=lower($3)) ORDER BY name LIMIT 10`, user(r), "%"+q+"%", q)
 	respond(w, 200, v, e)
 }
 func HandleSharedDatesList(w http.ResponseWriter, r *http.Request) {

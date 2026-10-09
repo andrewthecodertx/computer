@@ -65,7 +65,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [session?.user])
 
   const exitViewAs = useCallback(async () => {
-    await fetch('/api/admin/view-as', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: null }) })
+    try {
+      await fetch('/api/admin/view-as', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: null }) })
+    } catch { /* navigating to /admin surfaces any persistent failure */ }
     window.location.href = '/admin'
   }, [])
 
@@ -113,7 +115,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [pathname, router])
 
   const dismissAlert = useCallback(async (bookmarkId: string) => {
-    await fetch(`/api/alerts/${bookmarkId}`, { method: 'DELETE' })
+    try {
+      const res = await fetch(`/api/alerts/${bookmarkId}`, { method: 'DELETE' })
+      if (!res.ok) return
+    } catch { return }
     setAlerts((prev: any[]) => (prev ?? []).filter((a: any) => a?.id !== bookmarkId))
   }, [])
 

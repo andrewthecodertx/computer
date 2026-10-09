@@ -24,6 +24,19 @@ export function CalendarClient() {
   const [shareQuery, setShareQuery] = useState('')
   const [shareUsers, setShareUsers] = useState<any[]>([])
 
+  // Debounced user search; failures keep the previous results silently.
+  useEffect(() => {
+    const q = shareQuery.trim()
+    const t = setTimeout(async () => {
+      if (q.length < 2) { setShareUsers([]); return }
+      try {
+        const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`)
+        if (res.ok) setShareUsers(await res.json())
+      } catch { /* transient; retried on next keystroke */ }
+    }, q.length < 2 ? 0 : 250)
+    return () => clearTimeout(t)
+  }, [shareQuery])
+
   useEffect(() => {
     const timer = setTimeout(() => { const now = new Date(); setCurrentMonth(now); setToday(now) }, 0)
     return () => clearTimeout(timer)
@@ -131,7 +144,7 @@ export function CalendarClient() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">{format(selectedDay, 'EEEE, MMMM d, yyyy')}</h2>
-            <div className="flex gap-2"><Input placeholder="Share date with user…" value={shareQuery} onChange={async e => { const q = e.target.value; setShareQuery(q); if (q.length < 2) { setShareUsers([]); return } const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`); if (res.ok) setShareUsers(await res.json()) }} /></div>
+            <div className="flex gap-2"><Input placeholder="Share date with user…" value={shareQuery} onChange={e => setShareQuery(e.target.value)} /></div>
           </div>
           {shareUsers.map(u => <Button key={u.id} size="sm" variant="outline" onClick={async () => { const res = await fetch('/api/shared-dates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: format(selectedDay, 'yyyy-MM-dd'), recipientIds: [u.id] }) }); if (!res.ok) { toast.error('Could not share date'); return } toast.success('Date shared'); setShareQuery(''); setShareUsers([]); load() }}>Share with {u.name || u.email}</Button>)}
           {sharedDates.filter(s => s.date.slice(0, 10) === format(selectedDay, 'yyyy-MM-dd')).map(s => <div key={s.id} className="flex items-center gap-2 text-xs text-muted-foreground"><span>{s.creator.name || s.creator.email} shared with {s.recipient.name || s.recipient.email}</span><Button size="xs" variant="ghost" onClick={async () => { const res = await fetch(`/api/shared-dates/${s.id}`, { method: 'DELETE' }); if (!res.ok) { toast.error('Only the owner can stop sharing'); return } load() }}>Stop sharing</Button></div>)}

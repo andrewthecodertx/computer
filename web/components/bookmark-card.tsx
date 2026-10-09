@@ -82,7 +82,7 @@ export function BookmarkCard({ bookmark, onClick, compact }: BookmarkCardProps) 
             {bookmark?.dueDate && (
               <span className="flex items-center gap-1">
                 <CalendarIcon className="h-3 w-3" />
-                {new Date(bookmark.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                {new Date(bookmark.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}
               </span>
             )}
             {bookmark?.alertAt && (

@@ -196,10 +196,12 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     if (!linkOpen) return
     const q = linkQuery.trim()
     const t = setTimeout(async () => {
-      const params = new URLSearchParams({ limit: '8' })
-      if (q) params.set('search', q)
-      const res = await fetch(`/api/bookmarks?${params}`)
-      if (res.ok) setResults((await res.json()).slice(0, 8))
+      try {
+        const params = new URLSearchParams({ limit: '8' })
+        if (q) params.set('search', q)
+        const res = await fetch(`/api/bookmarks?${params}`)
+        if (res.ok) setResults((await res.json()).slice(0, 8))
+      } catch { /* transient; retried on next keystroke */ }
     }, 250)
     return () => clearTimeout(t)
   }, [linkQuery, linkOpen])
