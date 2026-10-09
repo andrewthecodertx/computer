@@ -40,11 +40,11 @@ func TestSessionLifetimeAndVerification(t *testing.T) {
 	}
 }
 
-func signTestToken(t *testing.T, typ string, ttl time.Duration) string {
+func signTestToken(t *testing.T, typ string, ttl time.Duration, ver int) string {
 	t.Helper()
 	now := time.Now()
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, SessionClaims{
-		UserID: "alice", Type: typ,
+		UserID: "alice", Type: typ, Ver: ver,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "computer",
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -58,17 +58,19 @@ func signTestToken(t *testing.T, typ string, ttl time.Duration) string {
 	return v
 }
 
-// The Bearer channel accepts only short-lived assertions; the cookie channel
-// accepts only session tokens (or legacy tokens issued before typ existed).
-// A 30-day cookie JWT must never work as a Bearer credential.
+// The Bearer channel accepts only short-lived assertions carrying a token
+// version (review SEC-02); the cookie channel accepts only session tokens (or
+// legacy tokens issued before typ existed). A 30-day cookie JWT must never
+// work as a Bearer credential.
 func TestTokenChannelBinding(t *testing.T) {
-	assertion := signTestToken(t, TokenTypeAssertion, 60*time.Second)
-	longAssertion := signTestToken(t, TokenTypeAssertion, time.Hour)
+	assertion := signTestToken(t, TokenTypeAssertion, 60*time.Second, 3)
+	versionlessAssertion := signTestToken(t, TokenTypeAssertion, 60*time.Second, 0)
+	longAssertion := signTestToken(t, TokenTypeAssertion, time.Hour, 3)
 	session, e := SignSession(SessionUser{ID: "alice"}, "test-secret")
 	if e != nil {
 		t.Fatal(e)
 	}
-	legacy := signTestToken(t, "", time.Hour)
+	legacy := signTestToken(t, "", time.Hour, 0)
 
 	bearer := func(token string) (*SessionUser, error) {
 		r := httptest.NewRequest("GET", "/api/me", nil)
@@ -81,8 +83,11 @@ func TestTokenChannelBinding(t *testing.T) {
 		return ReadSession(r, "test-secret")
 	}
 
-	if s, e := bearer(assertion); e != nil || s.ID != "alice" {
-		t.Fatalf("valid assertion rejected: %v %v", s, e)
+	if s, e := bearer(assertion); e != nil || s.ID != "alice" || s.Ver != 3 {
+		t.Fatalf("valid assertion rejected or lost its version: %v %v", s, e)
+	}
+	if _, e := bearer(versionlessAssertion); e == nil {
+		t.Fatal("assertion without token version accepted (revocation bypass)")
 	}
 	if _, e := bearer(session); e == nil {
 		t.Fatal("30-day session token accepted as Bearer assertion")

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 
 // The real built Next server/UI with isolated API fixtures: no app users or DB writes.
-const pages = new Map(['a', 'b'].map((id, position) => [id, { id, title: `Page ${id.toUpperCase()}`, content: '', position, pinned: false, bookmarks: [] }]))
+const pages = new Map(['a', 'b'].map((id, position) => [id, { id, title: `Page ${id.toUpperCase()}`, content: '', version: 1, position, pinned: false, bookmarks: [] }]))
 const tags = [{ id: 'one', name: 'First tag', color: '#123456' }, { id: 'two', name: 'Second tag', color: '#654321' }]
 const bookmarks = Array.from({ length: 205 }, (_, i) => ({
   id: `bookmark-${i}`, ownerId: 'fixture-user', title: `Fixture ${String(i).padStart(3, '0')}`, url: 'https://127.0.0.1/test',
@@ -24,17 +24,27 @@ const api = http.createServer(async (req, res) => {
     const body = raw ? JSON.parse(raw) : {}
     const url = new URL(req.url, 'http://fixture')
     let result = []
-    if (url.pathname === '/api/auth/login') result = { user: { id: 'fixture-user', name: 'Fixture', email: body.email, role: 'USER' } }
+    if (url.pathname === '/api/auth/login') result = { user: { id: 'fixture-user', name: 'Fixture', email: body.email, role: 'USER' }, tokenVersion: 1 }
     else if (url.pathname === '/api/me') result = { user: { id: 'fixture-user' }, effectiveUser: { id: 'fixture-user' }, isAdmin: false, viewingAs: null }
-    else if (url.pathname === '/api/pages') result = [...pages.values()]
+    // The list endpoint is a metadata projection: content bodies stay out (PERF-01).
+    else if (url.pathname === '/api/pages') result = [...pages.values()].map(({ content, ...summary }) => summary)
     else if (url.pathname.startsWith('/api/pages/')) {
       const id = url.pathname.split('/')[3]
       if (req.method === 'PATCH') {
         if (failSaves) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":"Fixture save failed"}'); return }
+        const target = pages.get(id)
+        // Optimistic concurrency (DATA-01): a stale base version is a 409.
+        if (body.version !== undefined && body.version !== target.version) {
+          res.writeHead(409, { 'Content-Type': 'application/json' })
+          res.end('{"error":"Page was modified elsewhere; reload to see the latest version"}')
+          return
+        }
         activeSaves++
         maxConcurrentSaves = Math.max(maxConcurrentSaves, activeSaves)
         await new Promise(resolve => setTimeout(resolve, delaySaves))
-        Object.assign(pages.get(id), body)
+        const { version, ...data } = body
+        Object.assign(target, data)
+        if ('content' in body) target.version++
         activeSaves--
       }
       result = pages.get(id)

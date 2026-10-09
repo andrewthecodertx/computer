@@ -178,6 +178,9 @@ CREATE TABLE "Page" (
   icon text,
   pinned boolean NOT NULL DEFAULT false,
   position int NOT NULL DEFAULT 0,
+  -- Optimistic concurrency revision (review DATA-01): content saves bump it;
+  -- a stale base version in PATCH is rejected with 409.
+  version integer NOT NULL DEFAULT 1,
   "ownerId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now()

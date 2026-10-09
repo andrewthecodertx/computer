@@ -3,6 +3,7 @@ package auth
 import (
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -17,21 +18,33 @@ import (
 // web app — reaches Go from a non-loopback address and is limited. An
 // operator fronting :8080 with their own same-host proxy accepts the same
 // trust they grant localhost today.
+//
+// Code review SEC-01 flagged that users behind one reverse proxy share a
+// bucket and recommended trusting X-Forwarded-For from an allowlisted proxy.
+// Keying strictly on RemoteAddr and never trusting forwarded headers is a
+// deliberate architectural decision for this deployment (see AGENTS.md);
+// do not "fix" it silently.
 
 const (
-	loginIPLimit      = 20             // logins per IP per window
-	loginIPWindow     = time.Minute    //
-	signupIPLimit     = 10             // signups per IP per window
-	signupIPWindow    = time.Hour      //
-	failureThreshold  = 5              // consecutive failures before lockout
+	loginIPLimit      = 20          // logins per IP per window
+	loginIPWindow     = time.Minute //
+	signupIPLimit     = 10          // signups per IP per window
+	signupIPWindow    = time.Hour   //
+	failureThreshold  = 5           // consecutive failures before lockout
 	failureLockout    = 15 * time.Minute
 	failureWindow     = time.Hour // failures older than this are forgotten
+
+	// limiterMaxEntries is the soft cap per store. Review SEC-03: the failure
+	// tracker previously never evicted sub-threshold entries (zero until), so
+	// cycling unique emails grew the map without bound. Every mutator now
+	// sweeps once the cap is exceeded.
+	limiterMaxEntries = 4096
 )
 
 type counter struct {
-	count  int
-	reset  time.Time
-	until  time.Time // lockout expiry (failure tracker only)
+	count int
+	reset time.Time
+	until time.Time // lockout expiry (failure tracker only)
 }
 
 type limiterStore struct {
@@ -41,18 +54,42 @@ type limiterStore struct {
 
 func newLimiterStore() *limiterStore { return &limiterStore{m: map[string]*counter{}} }
 
+// sweep bounds memory (review SEC-03). Callers hold s.mu. Pass 1 drops
+// entries whose window — and lockout, for the failure tracker — have expired.
+// If a burst of still-live keys (e.g. unique-email login failures inside the
+// failure window) keeps the store oversized, pass 2 evicts the oldest-tracked
+// non-locked entries until the cap holds again; active lockouts are left
+// alone so an eviction can never shorten a lockout.
+func (s *limiterStore) sweep(now time.Time) {
+	if len(s.m) <= limiterMaxEntries {
+		return
+	}
+	for k, c := range s.m {
+		if now.After(c.reset) && (c.until.IsZero() || now.After(c.until)) {
+			delete(s.m, k)
+		}
+	}
+	if len(s.m) <= limiterMaxEntries {
+		return
+	}
+	keys := make([]string, 0, len(s.m))
+	for k, c := range s.m {
+		if c.until.IsZero() || now.After(c.until) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool { return s.m[keys[i]].reset.Before(s.m[keys[j]].reset) })
+	for _, k := range keys[:min(len(keys), len(s.m)-limiterMaxEntries)] {
+		delete(s.m, k)
+	}
+}
+
 // allow reports whether key is within limit for the window starting at first
 // use. Expired entries are swept opportunistically to bound memory.
 func (s *limiterStore) allow(key string, limit int, window time.Duration, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.m) > 4096 {
-		for k, c := range s.m {
-			if now.After(c.reset) && c.until.IsZero() {
-				delete(s.m, k)
-			}
-		}
-	}
+	s.sweep(now)
 	c := s.m[key]
 	if c == nil || now.After(c.reset) {
 		s.m[key] = &counter{count: 1, reset: now.Add(window)}
@@ -65,6 +102,7 @@ func (s *limiterStore) allow(key string, limit int, window time.Duration, now ti
 func (s *limiterStore) locked(key string, now time.Time) (time.Duration, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweep(now)
 	c := s.m[key]
 	if c == nil || c.until.IsZero() {
 		return 0, false
@@ -73,12 +111,15 @@ func (s *limiterStore) locked(key string, now time.Time) (time.Duration, bool) {
 		delete(s.m, key)
 		return 0, false
 	}
-	return time.Until(c.until).Truncate(time.Second) + time.Second, true
+	// Consistent clock (review SEC-03): derive the retry delay from the
+	// supplied now rather than mixing in time.Until.
+	return c.until.Sub(now).Truncate(time.Second) + time.Second, true
 }
 
 func (s *limiterStore) noteFailure(key string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.sweep(now)
 	c := s.m[key]
 	if c == nil || now.After(c.reset) {
 		c = &counter{reset: now.Add(failureWindow)}

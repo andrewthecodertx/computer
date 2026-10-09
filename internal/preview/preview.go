@@ -28,7 +28,11 @@ type Preview struct {
 func publicDial(ctx context.Context, network, address string) (net.Conn, error) {
 	return netguard.DialContext(ctx, network, address)
 }
-func FetchPreview(raw string) Preview {
+// FetchPreview resolves metadata for raw. The caller's context bounds the
+// fetch (review CORR-02): when the incoming request is cancelled — the user
+// closed the tab or aborted the save — the outbound I/O and HTML parsing stop
+// instead of running to the 8-second client timeout.
+func FetchPreview(ctx context.Context, raw string) Preview {
 	u, e := url.Parse(raw)
 	if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
 		return Preview{}
@@ -42,7 +46,7 @@ func FetchPreview(raw string) Preview {
 		}
 		return nil
 	}}
-	req, e := http.NewRequest("GET", raw, nil)
+	req, e := http.NewRequestWithContext(ctx, "GET", raw, nil)
 	if e != nil {
 		return Preview{}
 	}
@@ -55,7 +59,14 @@ func FetchPreview(raw string) Preview {
 	if resp.StatusCode >= 400 {
 		return Preview{}
 	}
-	return ParseHTML(io.LimitReader(resp.Body, 1<<20), u)
+	// Review CORR-01: resolve relative favicons/og:images against the final
+	// response URL, not the caller-supplied one — a redirect can change the
+	// host or base path and break every relative asset.
+	base := u
+	if resp.Request != nil && resp.Request.URL != nil {
+		base = resp.Request.URL
+	}
+	return ParseHTML(io.LimitReader(resp.Body, 1<<20), base)
 }
 func ParseHTML(r io.Reader, base *url.URL) Preview {
 	out := Preview{}

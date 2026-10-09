@@ -23,4 +23,7 @@ CREATE INDEX IF NOT EXISTS "Bookmark_ownerId_alertAt_unsent_idx" ON "Bookmark"("
 -- Prisma's Json maps to jsonb; enables GIN indexing and dedups keys.
 -- Re-running on an already-jsonb column is a validated no-op.
 ALTER TABLE "SignalSource" ALTER COLUMN config TYPE jsonb USING config::jsonb;
+-- Optimistic concurrency for page saves (review DATA-01): content saves bump
+-- this revision and a stale base version in PATCH is rejected with 409.
+ALTER TABLE "Page" ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
 COMMIT;

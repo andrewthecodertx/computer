@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,6 +47,37 @@ func TestFailureLockout(t *testing.T) {
 	}
 	if _, locked := s.locked("ip|user", now.Add(failureLockout+time.Hour)); locked {
 		t.Fatal("lockout did not expire")
+	}
+}
+
+// Review SEC-03: sub-threshold failure entries (zero until) must not
+// accumulate without bound when an attacker cycles unique emails.
+func TestFailureTrackerEviction(t *testing.T) {
+	s := newLimiterStore()
+	now := time.Now()
+	// Entries tracked two hours ago are fully expired (failureWindow passed).
+	old := now.Add(-2 * time.Hour)
+	for i := 0; i < limiterMaxEntries+500; i++ {
+		s.noteFailure(fmt.Sprintf("ip|user%d", i), old)
+	}
+	if len(s.m) > limiterMaxEntries+1 {
+		t.Fatalf("live-key burst exceeded the soft cap: %d entries", len(s.m))
+	}
+	// A later call sweeps the fully expired burst.
+	s.noteFailure("ip|fresh", now)
+	if len(s.m) != 1 {
+		t.Fatalf("expired failure entries not evicted: %d remain", len(s.m))
+	}
+	// Active lockouts survive eviction from an oversized store.
+	s2 := newLimiterStore()
+	for i := 0; i < failureThreshold; i++ {
+		s2.noteFailure("ip|locked", now.Add(time.Duration(i)*time.Second))
+	}
+	for i := 0; i < limiterMaxEntries+500; i++ {
+		s2.noteFailure(fmt.Sprintf("ip|user%d", i), now)
+	}
+	if _, locked := s2.locked("ip|locked", now.Add(time.Minute)); !locked {
+		t.Fatal("active lockout evicted by the memory sweep")
 	}
 }
 

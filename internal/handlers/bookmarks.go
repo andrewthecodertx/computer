@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -16,6 +17,10 @@ import (
 
 func bookmark(r *http.Request, id string, public bool) (object, error) {
 	if public {
+		// Code review SEC-05 flagged the owner name on public links. The
+		// "Shared by" attribution is a deliberate product decision — the share
+		// page (web/app/share/bookmark/[id]) renders it — kept alongside the
+		// documented notes/dueDate disclosure; don't strip it silently.
 		return db.One(r.Context(), database(r), `SELECT jsonb_build_object(
 		 'id',b.id,'url',b.url,'title',b.title,'description',b.description,'notes',b.notes,
 		 'favicon',b.favicon,'ogImage',b."ogImage",'ogTitle',b."ogTitle",'ogDescription',b."ogDescription",
@@ -169,8 +174,8 @@ func setTags(r *http.Request, tx *sql.Tx, id string, tags []string) error {
 	}
 	return nil
 }
-func addPreview(d object, create bool) {
-	p := preview.FetchPreview(str(d, "url"))
+func addPreview(ctx context.Context, d object, create bool) {
+	p := preview.FetchPreview(ctx, str(d, "url"))
 	d["favicon"], d["ogImage"], d["ogTitle"], d["ogDescription"] = p.Favicon, p.OgImage, p.OgTitle, p.OgDescription
 	if create {
 		if d["title"] == nil {
@@ -206,7 +211,7 @@ func HandleBookmarksCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	id := db.NewID()
 	d["id"], d["ownerId"] = id, user(r)
-	addPreview(d, true)
+	addPreview(r.Context(), d, true)
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
 		if e := checkRelations(r, tx, d, tags); e != nil {
 			return e
@@ -253,7 +258,7 @@ func HandleBookmarksUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s := str(d, "url"); s != "" && s != str(existing, "url") {
-		addPreview(d, false)
+		addPreview(r.Context(), d, false)
 	}
 	d["updatedAt"] = time.Now().UTC()
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
@@ -347,5 +352,5 @@ func HandlePreview(w http.ResponseWriter, r *http.Request) {
 		respond(w, 0, nil, bad("A valid HTTP(S) URL is required"))
 		return
 	}
-	respond(w, 200, preview.FetchPreview(u), nil)
+	respond(w, 200, preview.FetchPreview(r.Context(), u), nil)
 }

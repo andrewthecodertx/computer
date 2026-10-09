@@ -2,9 +2,11 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/models"
+	"log"
 	"net/http"
 )
 
@@ -14,9 +16,10 @@ type SessionUser struct {
 	ID, Role, RealID, RealRole string
 	Name, Email                *string
 	RealUser                   map[string]any
-	// Ver is the tokenVersion embedded in a cookie JWT (0 = no claim:
-	// assertions and legacy cookies), checked against the user row so
-	// signout can revoke every issued cookie session.
+	// Ver is the tokenVersion embedded in the credential (0 = no claim:
+	// pre-revocation legacy cookies only — assertions must carry it), checked
+	// against the user row so signout revokes cookie sessions AND NextAuth
+	// assertions alike (review SEC-02).
 	Ver int
 }
 
@@ -33,10 +36,19 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		repo := db.NewUserRepo(db.FromContext(r.Context()))
 		u, e := repo.FindByID(r.Context(), s.ID)
 		if e != nil {
-			failure(w, 401, "Unauthorized")
+			// Review CORR-03: a missing user is a credential problem (401),
+			// but backend degradation must not masquerade as one — surface it
+			// as 503 so client retry logic and monitoring see the difference.
+			if errors.Is(e, db.ErrNotFound) {
+				failure(w, 401, "Unauthorized")
+			} else {
+				log.Printf("auth: user lookup failed for session %s: %v", s.ID, e)
+				failure(w, 503, "Service unavailable")
+			}
 			return
 		}
-		// Revoked session: the cookie's tokenVersion predates a signout bump.
+		// Revoked session: the credential's tokenVersion predates a signout
+		// bump. Applies to cookie sessions and NextAuth assertions alike.
 		if s.Ver > 0 && s.Ver != u.TokenVersion {
 			failure(w, 401, "Unauthorized")
 			return
@@ -45,6 +57,12 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		// address from the env var later does NOT demote the account (use the
 		// Admin screen). Silent demotion on env drift would be worse than an
 		// extra explicit revocation step.
+		//
+		// Code review SEC-04 flagged that this re-promotes an account demoted
+		// via the Admin screen while its address remains in ADMIN_EMAILS. The
+		// env-driven promotion is a deliberate architectural decision here —
+		// demoting an operator account means editing ADMIN_EMAILS too; do not
+		// "fix" this silently.
 		if u.Role != "ADMIN" && u.Email != nil && u.EmailVerified != nil && config.IsAdminEmail(*u.Email) {
 			if e = repo.SetRole(r.Context(), u.ID, "ADMIN"); e != nil {
 				failure(w, 500, "Unable to resolve role")

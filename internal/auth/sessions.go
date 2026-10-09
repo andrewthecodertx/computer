@@ -36,8 +36,10 @@ type SessionClaims struct {
 	UserID string `json:"uid"`
 	Role   string `json:"role"`
 	Type   string `json:"typ,omitempty"`
-	// Ver mirrors User.tokenVersion (≥1) for cookie sessions. Assertions and
-	// pre-revocation legacy cookies omit it, and skip the revocation check.
+	// Ver mirrors User.tokenVersion (≥1). Required on assertions (review
+	// SEC-02: a tokenVersion bump must revoke NextAuth-backed sessions too,
+	// not just Go cookie sessions); pre-revocation legacy cookies omit it and
+	// skip the revocation check.
 	Ver int `json:"ver,omitempty"`
 	jwt.RegisteredClaims
 }
@@ -106,7 +108,14 @@ func ReadSession(r *http.Request, secret string) (*SessionUser, error) {
 		if claims.IssuedAt == nil || claims.ExpiresAt == nil || claims.ExpiresAt.Sub(claims.IssuedAt.Time) > maxAssertionLifetime {
 			return nil, errors.New("auth: assertion lifetime too long")
 		}
-		return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil // assertions carry no ver; NextAuth owns their revocation
+		// Review SEC-02: assertions must carry the session's tokenVersion so a
+		// revocation bump ("sign out everywhere") invalidates NextAuth-backed
+		// browser sessions on their next backend call, instead of leaving them
+		// minting valid assertions until the NextAuth JWT expires.
+		if claims.Ver < 1 {
+			return nil, errors.New("auth: assertion missing token version")
+		}
+		return &SessionUser{ID: claims.UserID, Role: claims.Role, Ver: claims.Ver}, nil
 	}
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil {

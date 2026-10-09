@@ -85,7 +85,7 @@ Composite PK (`tagId`, `userId`), `createdAt`; both Cascade.
 `id`, `label`, `color` (default `#64748b`), `position` int, `key?` (`INBOX`/`TODO`/`IN_PROGRESS`/`DONE` for the default set, null for custom columns), `userId` → User (Cascade). Index (`userId`, `position`).
 
 ### 2.12 `Page` (Markdown workspace)
-`id`, `title`, `content` (text, default empty), `icon?`, `pinned` bool, `position` int, `ownerId` → User (Cascade). Index (`ownerId`, `position`).
+`id`, `title`, `content` (text, default empty), `icon?`, `pinned` bool, `position` int, `version` int (default 1; optimistic-concurrency revision — content saves bump it, stale base versions get 409), `ownerId` → User (Cascade). Index (`ownerId`, `position`).
 
 ### 2.13 `PageBookmark` (link a bookmark onto a page)
 Composite PK (`pageId`, `bookmarkId`), `position` int, `createdAt`; both Cascade.
@@ -180,7 +180,7 @@ All routes return JSON unless marked .md. "Owner" means `ownerId = effective use
 | Method + path | Input | Behavior |
 |---|---|---|
 | `POST /api/signup` | `{email, password, name?}` | 400 if missing; 409 if email exists; bcrypt(12); name defaults to the part of the email before `@`; role ADMIN if no admin exists yet (ignoring `@example.com` test users). Returns 201 `{ok, userId}` |
-| `POST /api/auth/login` | `{email, password}` | Server-side credentials sign-in; 401 on failure |
+| `POST /api/auth/login` | `{email, password}` | Server-side credentials sign-in; 401 on failure. Returns `{ok, user, tokenVersion}`; the NextAuth JWT stores `tokenVersion` and every backend assertion embeds it as `ver`, so a Go-side revocation bump ("sign out everywhere") rejects assertions from stale NextAuth sessions |
 | `GET/POST /api/auth/*` | | Auth library endpoints (csrf, callback/credentials, callback/authelia, session, signout) |
 | `GET /api/me` | | `{user: realUser, isAdmin, viewingAs: {id, name, email} \| null}` |
 
@@ -227,11 +227,11 @@ Moving a card = `PUT /api/bookmarks/:id {kanbanColumnId}`.
 ### 4.6 Pages
 | Method + path | Input | Behavior |
 |---|---|---|
-| `GET /api/pages?search=` | | Mine; search title/content; pinned first, then position, then created. Includes link count |
+| `GET /api/pages?search=` | | Mine; search title/content; pinned first, then position, then created. Includes link count. Metadata projection only — `content` is omitted (fetch it via `GET /api/pages/:id`) |
 | `POST /api/pages` | `{title?, content?}` | Title default "Untitled page", max 120 chars; position = count |
 | `PUT /api/pages` | `{order: id[]}` | Reorder |
 | `GET /api/pages/:id` | | Page plus linked bookmarks in order |
-| `PATCH /api/pages/:id` | `{title?, content?, pinned?, icon?, addBookmarkId?, removeBookmarkId?}` | Added bookmark must be mine or shared with me; appended at the end; adding the same one twice is harmless |
+| `PATCH /api/pages/:id` | `{title?, content?, pinned?, icon?, addBookmarkId?, removeBookmarkId?, version?}` | Added bookmark must be mine or shared with me; appended at the end; adding the same one twice is harmless. `version` is the optimistic-concurrency base: a mismatch returns 409 and changes nothing; saving `content` bumps the stored version (metadata patches do not) |
 | `DELETE /api/pages/:id` | | |
 | `GET /api/pages/:id/markdown` | | .md download |
 

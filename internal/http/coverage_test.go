@@ -12,10 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/andrew/go-computer/internal/auth"
 	"github.com/andrew/go-computer/internal/signals"
 	"github.com/emersion/go-imap/backend/memory"
 	imapserver "github.com/emersion/go-imap/server"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // Covers routes that previously had no coverage at any level (CODE_REVIEW
@@ -261,5 +264,105 @@ func TestSignalSchedulerRunOnce(t *testing.T) {
 	v = alice.request("GET", "/api/bookmarks/"+id+"/signals", nil, 200)
 	if len(v["signals"].([]any)) != before {
 		t.Fatal("scheduler tick duplicated signals")
+	}
+}
+
+// Page saves enforce optimistic concurrency (review DATA-01): a stale base
+// version is rejected with 409 and leaves the row untouched, content saves
+// bump the revision, and metadata patches neither require nor bump it. The
+// list projection omits content bodies (review PERF-01).
+func TestPageVersionAndListProjection(t *testing.T) {
+	srv := testServer(t)
+	alice := newAPIUser(t, srv, "pagever@computer.test")
+	created := alice.request("POST", "/api/pages", map[string]any{"title": "Doc", "content": "first"}, 201)
+	id := created["id"].(string)
+	if created["version"].(float64) != 1 {
+		t.Fatalf("new page did not start at version 1: %v", created["version"])
+	}
+	alice.request("PATCH", "/api/pages/"+id, map[string]any{"content": "stale tab", "version": 99}, 409)
+	if v := alice.request("GET", "/api/pages/"+id, nil, 200); v["content"] != "first" {
+		t.Fatal("rejected stale write still modified content")
+	}
+	saved := alice.request("PATCH", "/api/pages/"+id, map[string]any{"content": "second", "version": 1}, 200)
+	if saved["version"].(float64) != 2 {
+		t.Fatalf("content save did not bump version: %v", saved["version"])
+	}
+	pin := alice.request("PATCH", "/api/pages/"+id, map[string]any{"pinned": true}, 200)
+	if pin["version"].(float64) != 2 {
+		t.Fatalf("metadata patch changed the revision: %v", pin["version"])
+	}
+	alice.request("PATCH", "/api/pages/"+id, map[string]any{"content": "third", "version": 1}, 409)
+	alice.request("PATCH", "/api/pages/"+id, map[string]any{"content": "x", "version": -1}, 400)
+	found := false
+	for _, p := range alice.getJSON("/api/pages", 200) {
+		if p["id"] != id {
+			continue
+		}
+		found = true
+		if _, ok := p["content"]; ok {
+			t.Fatal("list projection still includes content")
+		}
+		if p["title"] != "Doc" || p["_count"] == nil {
+			t.Fatal("list projection lost metadata:", p)
+		}
+	}
+	if !found {
+		t.Fatal("page missing from list")
+	}
+}
+
+// Assertions ride the tokenVersion (review SEC-02): "sign out everywhere"
+// must revoke NextAuth-backed Bearer assertions, not just Go cookie sessions.
+func TestAssertionRevocationFollowsTokenVersion(t *testing.T) {
+	srv, d := testServerDB(t)
+	u := newAPIUser(t, srv, "assert-revoke@computer.test")
+	uid := u.request("GET", "/api/me", nil, 200)["user"].(map[string]any)["id"].(string)
+	var ver int
+	if e := d.QueryRow(`SELECT "tokenVersion" FROM "User" WHERE id=$1`, uid).Scan(&ver); e != nil {
+		t.Fatal(e)
+	}
+	sign := func(v int) string {
+		now := time.Now()
+		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, auth.SessionClaims{
+			UserID: uid, Type: auth.TokenTypeAssertion, Ver: v,
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    "computer",
+				IssuedAt:  jwt.NewNumericDate(now),
+				ExpiresAt: jwt.NewNumericDate(now.Add(60 * time.Second)),
+			},
+		})
+		s, e := tok.SignedString([]byte("integration-test-secret"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return s
+	}
+	bearer := func(token string) int {
+		rq, _ := http.NewRequest("GET", srv.URL+"/api/me", nil)
+		rq.Header.Set("Authorization", "Bearer "+token)
+		rs, e := u.c.Do(rq)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer rs.Body.Close()
+		io.Copy(io.Discard, rs.Body)
+		return rs.StatusCode
+	}
+	if code := bearer(sign(ver)); code != 200 {
+		t.Fatalf("current-version assertion rejected: %d", code)
+	}
+	if code := bearer(sign(0)); code != 401 {
+		t.Fatalf("version-less assertion accepted: %d", code)
+	}
+	u.request("POST", "/api/auth/signout", map[string]any{}, 200)
+	if code := bearer(sign(ver)); code != 401 {
+		t.Fatalf("assertion minted before the revocation bump still accepted: %d", code)
+	}
+	var bumped int
+	if e := d.QueryRow(`SELECT "tokenVersion" FROM "User" WHERE id=$1`, uid).Scan(&bumped); e != nil {
+		t.Fatal(e)
+	}
+	if code := bearer(sign(bumped)); code != 200 {
+		t.Fatalf("assertion with the post-bump version rejected: %d", code)
 	}
 }

@@ -6,6 +6,9 @@ declare module 'next-auth' {
     user: {
       id: string;
       role?: string;
+      // Go tokenVersion captured at login; embedded in every backend
+      // assertion so a revocation bump invalidates this session (SEC-02).
+      ver?: number;
       // Add custom fields here
     } & DefaultSession['user']; // includes name, email, image
   }
@@ -13,6 +16,7 @@ declare module 'next-auth' {
   interface User {
     id: string;
     role?: string;
+    tokenVersion?: number;
     // Mirror any fields added to Session['user'] above
   }
 }
@@ -21,5 +25,6 @@ declare module 'next-auth/jwt' {
   interface JWT {
     id: string;
     role?: string;
+    ver?: number;
   }
 }

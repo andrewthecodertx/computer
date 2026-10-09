@@ -11,13 +11,13 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { PageAutosave, type PageSaveState } from '@/lib/page-autosave'
+import { PageAutosave, PageConflictError, type PageSaveState } from '@/lib/page-autosave'
 import { PAGES_CHANGED, nextUntitledTitle, notifyPagesChanged, type PageSummary } from '@/lib/pages'
 
 export { PAGES_CHANGED }
 
 type LinkedBookmark = { id: string; url: string; title: string | null; favicon: string | null; ogImage: string | null; ogTitle: string | null; ogDescription: string | null; description: string | null }
-type PageDetail = PageSummary & { content: string; bookmarks: { bookmark: LinkedBookmark }[] }
+type PageDetail = PageSummary & { content: string; version: number; bookmarks: { bookmark: LinkedBookmark }[] }
 
 const notify = notifyPagesChanged
 const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
@@ -38,16 +38,41 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   const activePage = useRef(initialId)
   const loadSequence = useRef(0)
   const selectionSequence = useRef(0)
-  const [autosave] = useState(() => new PageAutosave(async (id, content) => {
-    const body = JSON.stringify({ content })
+  // Optimistic concurrency (review DATA-01): PageAutosave tracks the server
+  // revision per page and sends it with content saves, so a newer save from
+  // another tab or device answers 409 instead of being silently overwritten.
+  const persistContent = useCallback(async (id: string, content: string, version: number | undefined) => {
+    const body = JSON.stringify(typeof version === 'number' ? { content, version } : { content })
+    let res: Response
     try {
-      const res = await fetch(`/api/pages/${id}`, {
+      res = await fetch(`/api/pages/${id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body,
         keepalive: new TextEncoder().encode(body).length < 60000,
       })
-      if (!res.ok) throw new Error('Save failed')
-    } catch (error) { toast.error('Could not save page. Your draft is kept in this tab; retry saving.'); throw error }
-  }, (id, state) => setSaveStates(previous => ({ ...previous, [id]: state }))))
+    } catch (error) {
+      toast.error('Could not save page. Your draft is kept in this tab; retry saving.')
+      throw error
+    }
+    if (res.status === 409) {
+      // Another session saved first: re-base on the server revision and keep
+      // the local draft. The user is told the next save wins over the newer
+      // version, and autosave retries against the fresh base.
+      let serverVersion: number | undefined
+      try {
+        const latest = await fetch(`/api/pages/${id}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null))
+        if (latest && typeof latest.version === 'number') serverVersion = latest.version
+      } catch { /* keep the stale base; the next save surfaces the conflict again */ }
+      toast.error('This page was saved in another tab or device. Your text is kept here; saving again overwrites that newer version.')
+      throw new PageConflictError(serverVersion)
+    }
+    if (!res.ok) {
+      toast.error('Could not save page. Your draft is kept in this tab; retry saving.')
+      throw new Error('Save failed')
+    }
+    const saved = await res.json().catch(() => null)
+    return saved && typeof saved.version === 'number' ? saved.version : undefined
+  }, [])
+  const [autosave] = useState(() => new PageAutosave(persistContent, (id, state) => setSaveStates(previous => ({ ...previous, [id]: state }))))
   const saveState = activeId ? saveStates[activeId] ?? 'saved' : 'saved'
 
   useEffect(() => {
@@ -79,6 +104,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     if (!res.ok) { setPage(null); return }
     const data: PageDetail = await res.json()
     if (sequence !== loadSequence.current || activePage.current !== id) return
+    if (typeof data.version === 'number') autosave.setVersion(data.id, data.version)
     const draft = autosave.draft(id)
     setPage(data)
     setTitle(data.title)
@@ -121,6 +147,8 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     if (!activeId || page?.id !== activeId) return null
     const res = await fetch(`/api/pages/${page.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     if (!res.ok) { toast.error('Could not save page'); return null }
+    const saved = await res.json().catch(() => null)
+    if (saved && typeof saved.version === 'number') autosave.setVersion(page.id, saved.version)
     return res
   }
 

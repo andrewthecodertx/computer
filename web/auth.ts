@@ -32,7 +32,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           body: JSON.stringify({ email: credentials.email, password: credentials.password }),
         })
         if (!response.ok) return null
-        return (await response.json()).user
+        const data = await response.json()
+        // Carry Go's tokenVersion into the NextAuth JWT so every assertion
+        // this session signs is revocable by a version bump ("sign out
+        // everywhere") — review SEC-02.
+        return { ...data.user, tokenVersion: data.tokenVersion }
       },
     }),
   ],
@@ -43,7 +47,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // database user ID; the backend exchange stays an explicit 501 stub.
       return account?.provider !== 'authelia'
     },
-    async jwt({ token, user }) { if (user) token.id = user.id; return token },
-    async session({ session, token }) { if (session.user) session.user.id = token.id as string; return session },
+    async jwt({ token, user }) { if (user) { token.id = user.id; token.ver = user.tokenVersion } return token },
+    async session({ session, token }) {
+      if (session.user) { session.user.id = token.id as string; session.user.ver = token.ver }
+      return session
+    },
   },
 })

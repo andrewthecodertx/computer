@@ -53,18 +53,28 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go signals.RunLoop(ctx, d)
+	// Shutdown order is owned by main (review OPS-01): drain in-flight HTTP
+	// requests first, then await the background loops, and only afterwards let
+	// the deferred db close run. Previously Shutdown raced ListenAndServe's
+	// return and the process exited mid-drain.
+	workersDone := make(chan struct{})
+	go func() {
+		defer close(workersDone)
+		signals.RunLoop(ctx, d)
+	}()
 	srv := http.NewServer(cfg, d)
 	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(shutdown); err != nil {
-			log.Printf("shutdown: %v", err)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+			log.Fatalf("server failed: %v", err)
 		}
 	}()
 	log.Printf("computer API listening on %s", srv.Addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-		log.Fatal(err)
+	<-ctx.Done()
+	stop()
+	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdown); err != nil {
+		log.Printf("shutdown: %v", err)
 	}
+	<-workersDone
 }

@@ -7,14 +7,27 @@ type Draft = {
   saving: Promise<boolean> | null
 }
 
+// Thrown by the save callback when the server rejects a stale base version
+// (optimistic concurrency, review DATA-01). serverVersion is the revision the
+// server reported, so the next retry re-bases instead of conflicting forever.
+export class PageConflictError extends Error {
+  constructor(readonly serverVersion?: number) { super('Page was modified elsewhere') }
+}
+
 // Each page owns its debounce and serial save queue. A late response cannot
 // overwrite a newer edit, and tab-local drafts survive a failed save/navigation.
 export class PageAutosave {
   private drafts = new Map<string, Draft>()
+  // Server revision per page: sent with content saves and refreshed from save
+  // responses, so concurrent tabs/devices get 409s instead of silent overwrites.
+  private versions = new Map<string, number>()
   constructor(
-    private save: (id: string, content: string) => Promise<void>,
+    // Resolves with the server's new version when the response carries one.
+    private save: (id: string, content: string, version: number | undefined) => Promise<number | void>,
     private state: (id: string, state: PageSaveState) => void,
   ) {}
+
+  setVersion(id: string, version: number) { this.versions.set(id, version) }
 
   private key(id: string) { return `computer:page-draft:${id}` }
   private store(id: string, content: string | null) {
@@ -68,8 +81,16 @@ export class PageAutosave {
       const revision = draft.revision
       const content = draft.content
       this.state(id, 'saving')
-      try { await this.save(id, content) }
-      catch { this.state(id, 'dirty'); return false }
+      try {
+        const version = await this.save(id, content, this.versions.get(id))
+        if (typeof version === 'number') this.versions.set(id, version)
+      } catch (error) {
+        if (error instanceof PageConflictError && typeof error.serverVersion === 'number') {
+          this.versions.set(id, error.serverVersion)
+        }
+        this.state(id, 'dirty')
+        return false
+      }
       draft.savedRevision = revision
     }
     if (draft.timer) { clearTimeout(draft.timer); draft.timer = null }
@@ -84,6 +105,7 @@ export class PageAutosave {
     const draft = this.drafts.get(id)
     if (draft?.timer) clearTimeout(draft.timer)
     this.drafts.delete(id)
+    this.versions.delete(id)
     this.store(id, null)
   }
 }

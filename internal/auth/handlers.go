@@ -153,7 +153,10 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		failure(w, 500, "Session unavailable")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "user": identity(u)})
+	// tokenVersion rides along so the Next server can embed it in its session
+	// JWT and in every assertion it signs (review SEC-02); a revocation bump
+	// then invalidates NextAuth-backed sessions on their next backend call.
+	writeJSON(w, 200, map[string]any{"ok": true, "user": identity(u), "tokenVersion": u.TokenVersion})
 }
 func HandleAuth(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {

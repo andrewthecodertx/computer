@@ -21,6 +21,13 @@ type clientError struct{ message string }
 
 func (e clientError) Error() string   { return e.message }
 func bad(s string) error              { return clientError{s} }
+
+// conflictError maps to 409: the request collides with newer server state
+// (optimistic concurrency, review DATA-01), not with a unique constraint.
+type conflictError struct{ message string }
+
+func (e conflictError) Error() string { return e.message }
+func conflict(s string) error         { return conflictError{s} }
 func database(r *http.Request) *db.DB { return db.FromContext(r.Context()) }
 func user(r *http.Request) string     { s, _ := auth.SessionFromContext(r.Context()); return s.ID }
 func read(w http.ResponseWriter, r *http.Request) (object, bool) {
@@ -42,12 +49,15 @@ func respond(w http.ResponseWriter, status int, v any, e error) {
 	if e != nil {
 		code, msg := 500, "Server error"
 		var ce clientError
+		var cfe conflictError
 		var pg *pgconn.PgError
 		switch {
 		case errors.Is(e, db.ErrNotFound):
 			code, msg = 404, "Not found"
 		case errors.As(e, &ce):
 			code, msg = 400, ce.message
+		case errors.As(e, &cfe):
+			code, msg = 409, cfe.message
 		case errors.As(e, &pg) && pg.Code == "23505":
 			code, msg = 409, "Already exists"
 		case errors.As(e, &pg) && (pg.Code == "23503" || pg.Code == "22P02"):

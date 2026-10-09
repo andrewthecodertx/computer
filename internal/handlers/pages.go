@@ -13,7 +13,10 @@ func page(r *http.Request, id string) (object, error) {
 	return db.One(r.Context(), database(r), `SELECT to_jsonb(p)||jsonb_build_object('bookmarks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('bookmark',`+db.BookmarkView+`) ORDER BY pb.position) FROM "PageBookmark" pb JOIN "Bookmark" b ON b.id=pb."bookmarkId" WHERE pb."pageId"=p.id AND `+db.BookmarkVisible+`),'[]'::jsonb)) FROM "Page" p WHERE p.id=$1 AND p."ownerId"=$2`, id, user(r))
 }
 func HandlePagesList(w http.ResponseWriter, r *http.Request) {
-	v, e := db.Many(r.Context(), database(r), `SELECT to_jsonb(p)||jsonb_build_object('_count',jsonb_build_object('bookmarks',(SELECT count(*) FROM "PageBookmark" pb WHERE pb."pageId"=p.id))) FROM "Page" p WHERE "ownerId"=$1 AND (title ILIKE $2 OR content ILIKE $2) ORDER BY pinned DESC,position,"createdAt"`, user(r), "%"+r.URL.Query().Get("search")+"%")
+	// Review PERF-01: the list is a metadata projection — content bodies stay
+	// out of it (the sidebar/tab strip only render titles) and are fetched on
+	// demand via GET /api/pages/{id}. Search still matches content server-side.
+	v, e := db.Many(r.Context(), database(r), `SELECT (to_jsonb(p)-'content')||jsonb_build_object('_count',jsonb_build_object('bookmarks',(SELECT count(*) FROM "PageBookmark" pb WHERE pb."pageId"=p.id))) FROM "Page" p WHERE "ownerId"=$1 AND (title ILIKE $2 OR content ILIKE $2) ORDER BY pinned DESC,position,"createdAt"`, user(r), "%"+r.URL.Query().Get("search")+"%")
 	respond(w, 200, v, e)
 }
 func pageData(b object) (object, error) {
@@ -93,6 +96,20 @@ func HandlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 		respond(w, 0, nil, e)
 		return
 	}
+	// Optimistic concurrency (review DATA-01): a client that sends the
+	// version it edited from gets a 409 instead of silently overwriting a
+	// newer save from another tab or device. The revision counter tracks
+	// content edits — metadata patches (title/pin/links) neither require nor
+	// bump it, so they cannot invalidate an editor's in-flight draft.
+	baseVersion, hasVersion := 0, false
+	if v, ok := b["version"]; ok {
+		f, isNum := v.(float64)
+		if !isNum || f < 0 || f != float64(int64(f)) {
+			respond(w, 0, nil, bad("version must be a non-negative integer"))
+			return
+		}
+		baseVersion, hasVersion = int(f), true
+	}
 	d["updatedAt"] = time.Now().UTC()
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
 		// Same locking discipline as page creation/reorder: serializes
@@ -100,11 +117,23 @@ func HandlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 		if e := lockUser(r, tx); e != nil {
 			return e
 		}
-		if _, e := owned(r, tx, "Page", id, "ownerId"); e != nil {
+		current, e := owned(r, tx, "Page", id, "ownerId")
+		if e != nil {
 			return e
+		}
+		if hasVersion {
+			stored, _ := current["version"].(float64)
+			if int(stored) != baseVersion {
+				return conflict("Page was modified elsewhere; reload to see the latest version")
+			}
 		}
 		if _, e := db.Update(r.Context(), tx, "Page", id, "ownerId", user(r), d); e != nil {
 			return e
+		}
+		if _, ok := d["content"]; ok {
+			if _, e := tx.ExecContext(r.Context(), `UPDATE "Page" SET version=version+1 WHERE id=$1`, id); e != nil {
+				return e
+			}
 		}
 		if bid := str(b, "addBookmarkId"); bid != "" {
 			if _, e := db.One(r.Context(), tx, `SELECT to_jsonb(b) FROM "Bookmark" b WHERE b.id=$1 AND `+db.BookmarkVisible, bid, user(r)); e != nil {

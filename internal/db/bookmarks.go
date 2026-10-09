@@ -2,6 +2,12 @@ package db
 
 // PostgreSQL builds the camelCase JSON shape consumed by the existing UI.
 // The password-bearing User and ImapConfig rows are never embedded.
+//
+// Code review SEC-06 flagged that non-owner shared readers receive the full
+// projection — contact record and the sharedWith recipient list (names and
+// emails) included. Shipping one projection to every viewer is a deliberate
+// architectural decision for this codebase (the share panel and detail sheet
+// render these fields for all readers); don't split it silently.
 const BookmarkView = `to_jsonb(b) || jsonb_build_object(
  'tags',COALESCE((SELECT jsonb_agg(to_jsonb(bt)||jsonb_build_object('tag',to_jsonb(t))) FROM "BookmarkTag" bt JOIN "Tag" t ON t.id=bt."tagId" WHERE bt."bookmarkId"=b.id),'[]'::jsonb),
  'contact',(SELECT to_jsonb(c) FROM "Contact" c WHERE c.id=b."contactId"),
