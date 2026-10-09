@@ -3,6 +3,7 @@ package preview
 import (
 	"context"
 	"fmt"
+	"github.com/andrew/go-computer/internal/netguard"
 	"golang.org/x/net/html"
 	"io"
 	"net"
@@ -23,24 +24,9 @@ type Preview struct {
 
 // DNS is resolved and checked on each connection, including redirects, so
 // URL previews cannot reach another user's internal service or Docker DB.
+// The shared range logic lives in netguard (also used by CardDAV and IMAP).
 func publicDial(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, e := net.SplitHostPort(address)
-	if e != nil {
-		return nil, e
-	}
-	ips, e := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if e != nil {
-		return nil, e
-	}
-	for _, a := range ips {
-		if !a.IP.IsGlobalUnicast() || a.IP.IsPrivate() || a.IP.IsLoopback() || a.IP.IsLinkLocalUnicast() {
-			return nil, fmt.Errorf("private preview address")
-		}
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("unresolved preview address")
-	}
-	return (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+	return netguard.DialContext(ctx, network, address)
 }
 func FetchPreview(raw string) Preview {
 	u, e := url.Parse(raw)

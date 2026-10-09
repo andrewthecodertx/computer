@@ -26,9 +26,13 @@ const (
 	tagLength = 16
 )
 
-// Key derives the 32-byte AES key from the secret.
-// TODO: fail if the secret is empty (do NOT hard-code a fallback).
+// Key derives the 32-byte AES key from the secret. An empty secret is a
+// programming error: Encrypt/Decrypt guard it, and main fails startup without
+// a configured secret.
 func Key(secret string) []byte {
+	if secret == "" {
+		panic("crypto: empty secret")
+	}
 	h := sha256.Sum256([]byte(secret))
 	return h[:]
 }

@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/xml"
 	"github.com/andrew/go-computer/internal/config"
 	crypt "github.com/andrew/go-computer/internal/crypto"
 	"github.com/andrew/go-computer/internal/db"
+	"github.com/andrew/go-computer/internal/netguard"
 	"github.com/andrew/go-computer/internal/signals"
 	"io"
 	"net/http"
@@ -13,6 +15,17 @@ import (
 	"strings"
 	"time"
 )
+
+// carddavClient dials through netguard so a user-supplied Nextcloud URL can
+// never point the server at internal infrastructure (same guard as URL
+// previews). The transport is shared to avoid leaking idle sockets per sync.
+var carddavClient = &http.Client{
+	Timeout:   20 * time.Second,
+	Transport: &http.Transport{DialContext: netguard.DialContext},
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 func HandleAlertsCheck(w http.ResponseWriter, r *http.Request) {
 	v, e := db.Many(r.Context(), database(r), `SELECT to_jsonb(b) FROM "Bookmark" b WHERE "ownerId"=$1 AND "alertAt"<=now()+interval '15 minutes' AND NOT "alertSent" ORDER BY "alertAt"`, user(r))
@@ -112,8 +125,7 @@ func HandleContactsSync(w http.ResponseWriter, r *http.Request) {
 	req.SetBasicAuth(str(b, "username"), str(b, "password"))
 	req.Header.Set("Depth", "1")
 	req.Header.Set("Content-Type", "application/xml")
-	c := http.Client{Timeout: 20 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
-	res, e := c.Do(req)
+	res, e := carddavClient.Do(req)
 	if e != nil {
 		respond(w, 0, nil, bad("Could not connect to Nextcloud"))
 		return
@@ -263,20 +275,39 @@ func HandleImapTest(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, OK{true}, nil)
 }
 func HandleImapCheck(w http.ResponseWriter, r *http.Request) {
-	bms, e := db.Many(r.Context(), database(r), `SELECT to_jsonb(b) FROM "Bookmark" b WHERE "ownerId"=$1 AND "imapWatchEnabled"`, user(r))
+	// Bounded, single-connection pass: the watched-bookmark query is capped and
+	// all searches reuse one IMAP login under an overall deadline (matches the
+	// scheduler's 45s budget) instead of one fresh connection per bookmark.
+	bms, e := db.Many(r.Context(), database(r), `SELECT to_jsonb(b) FROM "Bookmark" b WHERE "ownerId"=$1 AND "imapWatchEnabled" ORDER BY "createdAt" LIMIT 50`, user(r))
 	if e != nil {
 		respond(w, 0, nil, e)
 		return
 	}
 	matches := []object{}
-	if len(bms) > 0 {
+	watched := make([]object, 0, len(bms))
+	for _, b := range bms {
+		if str(b, "imapQuery") != "" {
+			watched = append(watched, b)
+		}
+	}
+	if len(watched) > 0 {
 		m, e := signals.LoadMailbox(r.Context(), database(r), user(r))
 		if e != nil {
 			respond(w, 0, nil, bad("Configure IMAP first"))
 			return
 		}
-		for _, b := range bms {
-			events, e := signals.Search(r.Context(), m, "", str(b, "imapQuery"))
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		defer cancel()
+		c, e := signals.Connect(ctx, m)
+		if e != nil {
+			respond(w, 0, nil, bad("Mailbox connection or login failed"))
+			return
+		}
+		stop := context.AfterFunc(ctx, func() { c.Terminate() })
+		defer stop()
+		defer c.Logout()
+		for _, b := range watched {
+			events, e := signals.SearchConn(c, m, "", str(b, "imapQuery"))
 			if e != nil {
 				respond(w, 0, nil, bad("Mailbox search failed"))
 				return

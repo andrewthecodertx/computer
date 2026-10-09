@@ -25,7 +25,6 @@ type Config struct {
 	OIDCClientID     string
 	OIDCClientSecret string
 	AdminEmails      []string
-	DEMODemoPassword string
 }
 
 // Load reads configuration from the environment. Placeholders keep OIDC off.
@@ -39,7 +38,6 @@ func Load() *Config {
 		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
 		OIDCClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
 		AdminEmails:      AdminEmails(),
-		DEMODemoPassword: os.Getenv("DEMO_PASSWORD"),
 	}
 }
 

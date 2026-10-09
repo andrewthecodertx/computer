@@ -24,6 +24,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     CredentialsProvider({
       credentials: { email: { label: 'Email', type: 'email' }, password: { label: 'Password', type: 'password' } },
       async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) return null
         const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8080'}/api/auth/login`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
           body: JSON.stringify({ email: credentials.email, password: credentials.password }),

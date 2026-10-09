@@ -30,6 +30,9 @@ func testServerDB(t *testing.T) (*httptest.Server, *db.DB) {
 	t.Setenv("AUTH_SECRET", "integration-test-secret")
 	t.Setenv("NEXTAUTH_SECRET", "integration-test-secret")
 	t.Setenv("ADMIN_EMAILS", "")
+	// CardDAV/IMAP fakes listen on loopback; netguard blocks private ranges by
+	// default (production compose never sets this).
+	t.Setenv("INTEGRATIONS_ALLOW_PRIVATE", "1")
 	admin, e := db.New(&config.Config{DatabaseURL: dsn})
 	if e != nil {
 		t.Fatal(e)

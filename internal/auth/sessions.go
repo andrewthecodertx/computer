@@ -18,12 +18,24 @@ const (
 	sessionCookieName = "computer_session"
 	// time.Duration is nanoseconds, so multiply by time.Second explicitly.
 	sessionMaxAge = 30 * 24 * 60 * 60 * time.Second // 30 days
+
+	// Token types bind each token to its channel: the trusted Next server
+	// signs short-lived "assertion" tokens for the Bearer header; Go signs
+	// 30-day "session" tokens for its own cookie. Neither is accepted on the
+	// other channel, so a long-lived cookie JWT can never be replayed as a
+	// Bearer credential (and vice versa).
+	TokenTypeSession   = "session"
+	TokenTypeAssertion = "assertion"
+	// maxAssertionLifetime is the server-side cap for Bearer assertions; the
+	// Next server signs 60-second tokens.
+	maxAssertionLifetime = 120 * time.Second
 )
 
 // SessionClaims is the JWT payload.
 type SessionClaims struct {
 	UserID string `json:"uid"`
 	Role   string `json:"role"`
+	Type   string `json:"typ,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -36,6 +48,7 @@ func SignSession(u SessionUser, secret string) (string, error) {
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, SessionClaims{
 		UserID: u.ID,
 		Role:   u.Role,
+		Type:   TokenTypeSession,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(sessionMaxAge)),
@@ -45,8 +58,18 @@ func SignSession(u SessionUser, secret string) (string, error) {
 	return tok.SignedString([]byte(secret))
 }
 
-// VerifySession decodes a JWT cookie value into the session user.
+// VerifySession decodes a JWT cookie value into the session user. It checks
+// signature, algorithm, issuer and expiry — but NOT the channel binding; use
+// ReadSession for request handling.
 func VerifySession(token, secret string) (*SessionUser, error) {
+	claims, err := verifyClaims(token, secret)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
+}
+
+func verifyClaims(token, secret string) (*SessionClaims, error) {
 	if secret == "" {
 		return nil, fmt.Errorf("auth: empty session secret")
 	}
@@ -60,19 +83,39 @@ func VerifySession(token, secret string) (*SessionUser, error) {
 	if !ok || !tok.Valid || claims.UserID == "" {
 		return nil, errors.New("auth: invalid token")
 	}
-	return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
+	return claims, nil
 }
 
-// ReadSession pulls the session cookie from the request and verifies it.
+// ReadSession pulls the session credential from the request and verifies it,
+// enforcing the channel binding: Bearer requires a short-lived assertion; the
+// cookie requires a session token (tokens issued before typ existed, i.e. no
+// typ claim, remain valid on the cookie channel only).
 func ReadSession(r *http.Request, secret string) (*SessionUser, error) {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-		return VerifySession(strings.TrimPrefix(h, "Bearer "), secret)
+		claims, err := verifyClaims(strings.TrimPrefix(h, "Bearer "), secret)
+		if err != nil {
+			return nil, err
+		}
+		if claims.Type != TokenTypeAssertion {
+			return nil, errors.New("auth: bearer token is not an assertion")
+		}
+		if claims.IssuedAt == nil || claims.ExpiresAt == nil || claims.ExpiresAt.Sub(claims.IssuedAt.Time) > maxAssertionLifetime {
+			return nil, errors.New("auth: assertion lifetime too long")
+		}
+		return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
 	}
 	c, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return nil, err
 	}
-	return VerifySession(c.Value, secret)
+	claims, err := verifyClaims(c.Value, secret)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Type != "" && claims.Type != TokenTypeSession {
+		return nil, errors.New("auth: cookie token has wrong type")
+	}
+	return &SessionUser{ID: claims.UserID, Role: claims.Role}, nil
 }
 
 // WriteSessionCookie sets the signed session cookie on the response.

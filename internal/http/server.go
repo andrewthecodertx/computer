@@ -38,9 +38,9 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 		handlers.WriteJSON(w, 200, map[string]string{"status": "ready"})
 	})
 
-	// 4.1 Auth and account
-	mux.HandleFunc("POST /api/signup", auth.HandleSignup)
-	mux.HandleFunc("POST /api/auth/login", auth.HandleLogin)
+	// 4.1 Auth and account (rate limited for non-loopback peers)
+	mux.HandleFunc("POST /api/signup", auth.RateLimitSignup(auth.HandleSignup))
+	mux.HandleFunc("POST /api/auth/login", auth.RateLimitLogin(auth.HandleLogin))
 	mux.HandleFunc("GET /api/auth/", auth.HandleAuth) // csrf, callbacks, session, signout
 	mux.HandleFunc("POST /api/auth/", auth.HandleAuth)
 	mux.HandleFunc("GET /api/me", authed(auth.HandleMe))

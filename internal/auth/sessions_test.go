@@ -2,6 +2,8 @@ package auth
 
 import (
 	"github.com/golang-jwt/jwt/v5"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -35,5 +37,69 @@ func TestSessionLifetimeAndVerification(t *testing.T) {
 	v, _ = token256.SignedString([]byte("test-secret"))
 	if _, e = VerifySession(v, "test-secret"); e == nil {
 		t.Fatal("accepted unexpected algorithm")
+	}
+}
+
+func signTestToken(t *testing.T, typ string, ttl time.Duration) string {
+	t.Helper()
+	now := time.Now()
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, SessionClaims{
+		UserID: "alice", Type: typ,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "computer",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+		},
+	})
+	v, e := tok.SignedString([]byte("test-secret"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	return v
+}
+
+// The Bearer channel accepts only short-lived assertions; the cookie channel
+// accepts only session tokens (or legacy tokens issued before typ existed).
+// A 30-day cookie JWT must never work as a Bearer credential.
+func TestTokenChannelBinding(t *testing.T) {
+	assertion := signTestToken(t, TokenTypeAssertion, 60*time.Second)
+	longAssertion := signTestToken(t, TokenTypeAssertion, time.Hour)
+	session, e := SignSession(SessionUser{ID: "alice"}, "test-secret")
+	if e != nil {
+		t.Fatal(e)
+	}
+	legacy := signTestToken(t, "", time.Hour)
+
+	bearer := func(token string) (*SessionUser, error) {
+		r := httptest.NewRequest("GET", "/api/me", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		return ReadSession(r, "test-secret")
+	}
+	cookie := func(token string) (*SessionUser, error) {
+		r := httptest.NewRequest("GET", "/api/me", nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+		return ReadSession(r, "test-secret")
+	}
+
+	if s, e := bearer(assertion); e != nil || s.ID != "alice" {
+		t.Fatalf("valid assertion rejected: %v %v", s, e)
+	}
+	if _, e := bearer(session); e == nil {
+		t.Fatal("30-day session token accepted as Bearer assertion")
+	}
+	if _, e := bearer(longAssertion); e == nil {
+		t.Fatal("over-long assertion accepted (exp-iat cap not enforced)")
+	}
+	if _, e := bearer(legacy); e == nil {
+		t.Fatal("typ-less token accepted as Bearer assertion")
+	}
+	if s, e := cookie(session); e != nil || s.ID != "alice" {
+		t.Fatalf("valid session cookie rejected: %v %v", s, e)
+	}
+	if s, e := cookie(legacy); e != nil || s.ID != "alice" {
+		t.Fatalf("legacy typ-less cookie rejected: %v %v", s, e)
+	}
+	if _, e := cookie(assertion); e == nil {
+		t.Fatal("assertion accepted as cookie session")
 	}
 }

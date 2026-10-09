@@ -20,7 +20,7 @@ import (
 //
 // Run: go run .            (or build and serve)
 // Env: see porting guide section 7 (DATABASE_URL, NEXTAUTH_SECRET/AUTH_SECRET,
-// NEXTAUTH_URL, optional OIDC_*, ADMIN_EMAILS, DEMO_PASSWORD).
+// NEXTAUTH_URL, optional OIDC_*, ADMIN_EMAILS).
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
@@ -36,6 +36,9 @@ func main() {
 		return
 	}
 	cfg := config.Load()
+	if cfg.Secret() == "" {
+		log.Fatal("config: AUTH_SECRET (or NEXTAUTH_SECRET) must be set")
+	}
 	d, err := db.New(cfg)
 	if err != nil {
 		log.Fatalf("db: %v", err)
@@ -56,7 +59,9 @@ func main() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(shutdown)
+		if err := srv.Shutdown(shutdown); err != nil {
+			log.Printf("shutdown: %v", err)
+		}
 	}()
 	log.Printf("computer API listening on %s", srv.Addr)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {

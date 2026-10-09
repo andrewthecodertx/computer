@@ -10,9 +10,15 @@ import (
 	"net/mail"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const bcryptCost = 12
+
+// dummyPasswordHash is bcrypt-cost-12 hash of a value no user can supply.
+// Login compares against it for unknown accounts so timing does not reveal
+// which emails are registered.
+const dummyPasswordHash = "$2a$12$OeKCcVovKAAb7gKAhWqA..yGR3eoqGQAKzSrWwLryJgAro0Vc60WW"
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -101,10 +107,35 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	u, e := db.NewUserRepo(db.FromContext(r.Context())).FindByEmail(r.Context(), strings.ToLower(strings.TrimSpace(req.Email)))
-	if e != nil || u.Password == nil || !bcryptCheckImpl(req.Password, *u.Password) {
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if !isLoopback(r) {
+		if retry, locked := loginFailures.locked(clientIP(r)+"|"+email, time.Now()); locked {
+			tooManyRequests(w, retry)
+			return
+		}
+	}
+	u, e := db.NewUserRepo(db.FromContext(r.Context())).FindByEmail(r.Context(), email)
+	if e != nil && !errors.Is(e, db.ErrNotFound) {
+		failure(w, 500, "Database unavailable")
+		return
+	}
+	// Unknown or password-less accounts still pay a bcrypt comparison so
+	// response latency does not reveal which emails are registered.
+	ok := false
+	if e == nil && u.Password != nil {
+		ok = bcryptCheckImpl(req.Password, *u.Password)
+	} else {
+		bcryptCheckImpl(req.Password, dummyPasswordHash)
+	}
+	if !ok {
+		if !isLoopback(r) {
+			loginFailures.noteFailure(clientIP(r)+"|"+email, time.Now())
+		}
 		failure(w, 401, "Invalid credentials")
 		return
+	}
+	if !isLoopback(r) {
+		loginFailures.noteSuccess(clientIP(r) + "|" + email)
 	}
 	if e = WriteSessionCookie(w, SessionUser{ID: u.ID, Role: u.Role}, config.Load().Secret()); e != nil {
 		failure(w, 500, "Session unavailable")
