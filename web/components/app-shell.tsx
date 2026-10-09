@@ -107,8 +107,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const onSearch = useCallback((q: string) => {
     setSearchQuery(q)
     window.dispatchEvent(new CustomEvent('computer:search', { detail: q }))
-    if (pathname !== '/dashboard') {
-          router.push(`/dashboard?search=${encodeURIComponent(q)}`)
+    if (pathname !== '/bookmarks') {
+          router.push(`/bookmarks?search=${encodeURIComponent(q)}`)
     }
   }, [pathname, router])
 

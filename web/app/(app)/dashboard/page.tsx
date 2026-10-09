@@ -1,5 +1,7 @@
-import { DashboardClient } from './client'
+import { redirect } from 'next/navigation'
 
-export default function DashboardPage() {
-  return <DashboardClient />
+// The dashboard was folded into the "All Bookmarks" filter view.
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ search?: string }> }) {
+  const { search } = await searchParams
+  redirect(search ? `/bookmarks?search=${encodeURIComponent(search)}` : '/bookmarks')
 }

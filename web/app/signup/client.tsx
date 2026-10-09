@@ -31,7 +31,7 @@ export function SignupClient() {
         // Auto sign in
         const result = await signIn('credentials', { email, password, redirect: false })
         if (result?.ok) {
-          router.push('/dashboard')
+          router.push('/pages')
         } else {
           toast.success('Account created! Please sign in.')
           router.push('/login')

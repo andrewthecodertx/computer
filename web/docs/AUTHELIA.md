@@ -192,7 +192,7 @@ Before implementing the handoff, you can verify configuration and discovery:
 After the developer integration is complete:
 
 1. Sign out, click **Sign in with Authelia**, and authenticate with Authelia.
-2. Confirm the browser returns through the NextAuth callback to `/dashboard`.
+2. Confirm the browser returns through the NextAuth callback to `/pages`.
 3. Check `/api/me` through the web app and save a bookmark to confirm the
    session resolves to the intended local user and Go accepts its identity.
 4. Sign out and back in to verify the same user and data are retained.

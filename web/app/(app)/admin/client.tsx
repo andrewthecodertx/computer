@@ -21,7 +21,7 @@ export function AdminClient({ currentUserId }: { currentUserId: string }) {
   const viewAs = async (userId: string) => {
     const res = await fetch('/api/admin/view-as', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) })
     if (!res.ok) return toast.error('Could not switch account')
-    window.location.href = '/dashboard'
+    window.location.href = '/pages'
   }
 
   const toggleRole = async (u: U) => {

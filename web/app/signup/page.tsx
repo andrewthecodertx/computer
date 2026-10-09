@@ -4,6 +4,6 @@ import { redirect } from 'next/navigation'
 
 export default async function SignupPage() {
   const session = await auth()
-  if (session?.user) redirect('/dashboard')
+  if (session?.user) redirect('/pages')
   return <SignupClient />
 }

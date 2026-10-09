@@ -23,7 +23,7 @@ export function LoginClient({ oidcEnabled }: { oidcEnabled: boolean }) {
     setLoading(true)
     const result = await signIn('credentials', { email, password, redirect: false })
     if (result?.ok) {
-      router.push('/dashboard')
+      router.push('/pages')
     } else {
       toast.error('Invalid credentials')
     }
@@ -45,7 +45,7 @@ export function LoginClient({ oidcEnabled }: { oidcEnabled: boolean }) {
 
         <div className="space-y-4">
           <Button
-            onClick={() => oidcEnabled && signIn('authelia', { redirectTo: '/dashboard' })}
+            onClick={() => oidcEnabled && signIn('authelia', { redirectTo: '/pages' })}
             className="w-full gap-2"
             size="lg"
             variant="default"

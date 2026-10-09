@@ -12,14 +12,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { PageAutosave, type PageSaveState } from '@/lib/page-autosave'
+import { PAGES_CHANGED, nextUntitledTitle, notifyPagesChanged, type PageSummary } from '@/lib/pages'
 
-export const PAGES_CHANGED = 'computer:pages-changed'
+export { PAGES_CHANGED }
 
-type PageSummary = { id: string; title: string; pinned: boolean; position: number; _count?: { bookmarks: number } }
 type LinkedBookmark = { id: string; url: string; title: string | null; favicon: string | null; ogImage: string | null; ogTitle: string | null; ogDescription: string | null; description: string | null }
 type PageDetail = PageSummary & { content: string; bookmarks: { bookmark: LinkedBookmark }[] }
 
-const notify = () => window.dispatchEvent(new Event(PAGES_CHANGED))
+const notify = notifyPagesChanged
 const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
 
 export function PagesClient({ initialId }: { initialId: string | null }) {
@@ -110,6 +110,13 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     router.replace(`/pages?id=${id}`)
   }
 
+  // The sidebar can create or open pages while this workspace stays mounted.
+  useEffect(() => {
+    if (!initialId || initialId === activePage.current) return
+    void loadPages()
+    void select(initialId)
+  }, [initialId])
+
   const patch = async (body: Record<string, unknown>) => {
     if (!activeId || page?.id !== activeId) return null
     const res = await fetch(`/api/pages/${page.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -119,7 +126,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
 
   const createPage = async () => {
     if (activePage.current && !await autosave.flush(activePage.current)) return
-    const res = await fetch('/api/pages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Untitled page' }) })
+    const res = await fetch('/api/pages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: nextUntitledTitle(pages.map((p) => p.title)) }) })
     if (!res.ok) { toast.error('Could not create page'); return }
     const p = await res.json()
     await loadPages()
@@ -135,8 +142,11 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   }
 
   const saveTitle = async () => {
-    const t = title.trim() || 'Untitled page'
-    if (!page || t === page.title) return
+    if (!page) return
+    const t = title.trim()
+    // Keep the generated "Untitled N" name until the user gives a real one.
+    if (!t) { setTitle(page.title); return }
+    if (t === page.title) return
     if (await patch({ title: t })) {
       setPage(current => current?.id === page.id ? { ...current, title: t } : current)
       await loadPages(); notify()

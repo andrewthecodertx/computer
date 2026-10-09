@@ -282,9 +282,9 @@ Moving a card = `PUT /api/bookmarks/:id {kanbanColumnId}`.
 | Screen / component | Responsibilities |
 |---|---|
 | **App shell** | Loads session and `/api/me`; shows the View as banner with an Exit button (`POST /api/admin/view-as {userId:null}`); asks for notification permission; polls `/api/alerts/check` on load and every **5 minutes**, showing a browser `Notification("computer alert", "<title> is due!")` per alert; provides search text, the add-bookmark dialog and the bookmark detail panel to child screens |
-| **Sidebar** | Navigation (Dashboard, Bookmarks, Calendar, Tags, Contacts, Kanban, Pages, Settings, plus Admin for admins); pinned pages list that refreshes on the in-app event `computer:pages-changed` |
-| **Dashboard** `/dashboard` | Bookmark card grid with Mine / Shared tabs and search |
-| **Bookmarks** `/bookmarks` | Sortable table |
+| **Sidebar** | Pages first: full page list (pinned pages marked) plus a New page button creating the next "Untitled N", refreshing on the in-app event `computer:pages-changed`. Below, a Filters section (All Bookmarks, Calendar, Tags, Kanban, Contacts — views over the same bookmark collection) and Settings, plus Admin for admins |
+| **Dashboard** `/dashboard` | Removed as a screen; redirects to `/bookmarks` preserving `?search=` |
+| **Bookmarks** `/bookmarks` | Sortable table with Mine / Shared tabs and search (absorbed the old dashboard) |
 | **Calendar** `/calendar` | Month grid of bookmarks by `dueDate`, plus shared dates |
 | **Tags** `/tags` | Tag list (create, color, share) with filtered bookmarks |
 | **Contacts** `/contacts` | Synced contacts and their linked bookmarks |

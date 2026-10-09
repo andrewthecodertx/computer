@@ -47,7 +47,7 @@ reverse proxy (Caddy, nginx) for HTTPS.
 
 | Path | Contents |
 |---|---|
-| `app/(app)/` | Signed-in pages: dashboard, calendar, tags, contacts, kanban, bookmarks, settings |
+| `app/(app)/` | Signed-in screens: pages (primary workspace), bookmark filters (all, calendar, tags, contacts, kanban), settings; `/dashboard` redirects to `/bookmarks` |
 | `app/api/` | API routes: bookmarks, tags, sharing, preview, contacts sync, IMAP, alerts |
 | `app/share/bookmark/[id]` | Public read-only bookmark page |
 | `components/` | UI components |

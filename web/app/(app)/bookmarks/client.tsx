@@ -5,16 +5,18 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { BookmarkDetailSheet } from '@/components/bookmark-detail-sheet'
-import { ExternalLink, Search, Trash2, ChevronUp, ChevronDown } from 'lucide-react'
+import { ExternalLink, Search, Trash2, ChevronUp, ChevronDown, Inbox, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Bookmark } from '@/components/app-shell'
 import { fetchBookmarks } from '@/lib/bookmarks'
 
 export function BookmarksClient() {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
+  const [sharedBookmarks, setSharedBookmarks] = useState<Bookmark[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Bookmark | null>(null)
+  const [tab, setTab] = useState<'mine' | 'shared'>('mine')
   const [sortField, setSortField] = useState<'title' | 'updatedAt' | 'kanbanStatus'>('updatedAt')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
@@ -22,14 +24,28 @@ export function BookmarksClient() {
     setLoading(true)
     const params = new URLSearchParams()
     if (search) params.set('search', search)
-    try { setBookmarks(await fetchBookmarks(params)) }
-    catch { toast.error('Could not load bookmarks') }
+    try {
+      const [mine, shared] = await Promise.all([
+        fetchBookmarks(params),
+        fetchBookmarks(new URLSearchParams({ shared: 'true' })),
+      ])
+      setBookmarks(mine ?? [])
+      setSharedBookmarks(shared ?? [])
+    } catch { toast.error('Could not load bookmarks') }
     finally { setLoading(false) }
   }, [search])
 
   useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])
+  // Top-bar search lands here (this view replaced the old dashboard).
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(new URLSearchParams(window.location.search).get('search') || ''), 0)
+    const handler = (event: Event) => setSearch((event as CustomEvent<string>).detail)
+    window.addEventListener('computer:search', handler)
+    return () => { clearTimeout(timer); window.removeEventListener('computer:search', handler) }
+  }, [])
 
-  const sorted = [...(bookmarks ?? [])].sort((a: any, b: any) => {
+  const displayBookmarks = tab === 'mine' ? bookmarks : sharedBookmarks
+  const sorted = [...(displayBookmarks ?? [])].sort((a: any, b: any) => {
     const va = a?.[sortField] ?? ''
     const vb = b?.[sortField] ?? ''
     return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va))
@@ -49,11 +65,21 @@ export function BookmarksClient() {
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight">All Bookmarks</h1>
-        <p className="text-sm text-muted-foreground mt-1">Browse and manage your entire collection</p>
+        <p className="text-sm text-muted-foreground mt-1">Every saved link. Use the sidebar to filter by calendar, tags, board, or contacts.</p>
       </div>
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="Filter..." value={search} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)} className="pl-9" />
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Filter..." value={search} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        <div className="flex rounded-lg border overflow-hidden">
+          <button onClick={() => setTab('mine')} className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${tab === 'mine' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'}`}>
+            <Inbox className="h-3.5 w-3.5" /> Mine
+          </button>
+          <button onClick={() => setTab('shared')} className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${tab === 'shared' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'}`}>
+            <Share2 className="h-3.5 w-3.5" /> Shared
+          </button>
+        </div>
       </div>
       <div className="rounded-lg border overflow-hidden">
         <div className="overflow-x-auto">
@@ -104,7 +130,9 @@ export function BookmarksClient() {
                   <td className="px-4 py-3">
                     <div className="flex gap-1" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                       <a href={b.url} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-4 w-4 text-muted-foreground hover:text-primary" /></a>
-                      <button onClick={async () => { if (confirm('Delete?')) { await fetch(`/api/bookmarks/${b.id}`, { method: 'DELETE' }); toast.success('Deleted'); load() } }}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></button>
+                      {tab === 'mine' && (
+                        <button onClick={async () => { if (confirm('Delete?')) { await fetch(`/api/bookmarks/${b.id}`, { method: 'DELETE' }); toast.success('Deleted'); load() } }}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></button>
+                      )}
                     </div>
                   </td>
                 </tr>
