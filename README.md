@@ -69,7 +69,14 @@ database. Do not run the initial schema against an already initialized database.
   alerts, Markdown downloads and public read-only links.
 - Bookmark collections use cursor pagination; the UI follows every page so
   collections larger than 200 remain visible on all organization screens.
-- Pages: Markdown editing/autosave, link collections, pinning, reorder/export.
+- Notion-style workspace shell: a Quick Find command palette (Ctrl/Cmd+K)
+  jumps to any page, bookmark, tag or view and runs commands (new page, add
+  bookmark, theme toggle); the slim top bar shows a breadcrumb path
+  (workspace / section / page); sidebar sections collapse and page rows
+  expose hover actions (pin, inline rename, delete).
+- Pages: Markdown editing/autosave with a Notion-style slash-command block
+  menu (type `/` for headings, to-dos, lists, quotes, dividers and code) and
+  the `[]` + space to-do shortcut, link collections, pinning, reorder/export.
   Saves are queued per page; unsaved drafts are kept in the current browser tab
   for recovery after a failed save. Page switching waits for pending saves.
 - Kanban: custom columns, card moves, reorder; deleting a column moves cards.
@@ -179,8 +186,9 @@ CHROMIUM_PATH=/usr/bin/chromium make e2e
 ```
 
 These verify login, UI bookmark creation, Go-backed persistence, public links,
-kanban, page autosave/exports and every application screen. Test accounts have
-unique names and only those accounts are deleted afterward.
+Quick Find deep links, kanban, page autosave/slash commands/exports and every
+application screen. Test accounts have unique names and only those accounts
+are deleted afterward.
 
 Targeted browser regressions (after `yarn build` in `web/`):
 
@@ -206,8 +214,9 @@ existing users can be promoted from the Admin screen.
 ## Client test build
 
 Use [RUNNING.md](RUNNING.md) for the client handoff. Test login, bookmark editing,
-tag/contact organization, calendar dates, kanban, Markdown pages/exports, and
-sharing with separate accounts.
+tag/contact organization, calendar dates, kanban, Markdown pages/exports,
+Quick Find (Ctrl/Cmd+K), slash commands in the page editor, and sharing with
+separate accounts.
 
 Current integration boundaries:
 
