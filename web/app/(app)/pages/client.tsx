@@ -5,16 +5,35 @@ import { useRouter } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { toast } from 'sonner'
-import { ChevronLeft, ChevronRight, Download, Eye, FileText, Link2, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from 'lucide-react'
+import {
+  ChevronLeft, ChevronRight, Code, Download, Eye, FileText, Heading1, Heading2, Heading3,
+  Link2, List, ListOrdered, ListTodo, Minus, Pencil, Pin, PinOff, Plus, Quote, Search, Trash2, Type, X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { PageAutosave, PageConflictError, type PageSaveState } from '@/lib/page-autosave'
-import { PAGES_CHANGED, nextUntitledTitle, notifyPagesChanged, type PageSummary } from '@/lib/pages'
+import { PAGES_CHANGED, nextUntitledTitle, notifyActivePage, notifyPagesChanged, type PageSummary } from '@/lib/pages'
 
 export { PAGES_CHANGED }
+
+// Notion-style slash menu: typing "/" at the start of a line offers blocks
+// that insert their Markdown equivalent. The textarea stays the source of
+// truth, so autosave and conflict handling are untouched.
+const SLASH_BLOCKS = [
+  { key: 'text', label: 'Text', desc: 'Plain paragraph', icon: Type, prefix: '' },
+  { key: 'h1', label: 'Heading 1', desc: 'Large section heading', icon: Heading1, prefix: '# ' },
+  { key: 'h2', label: 'Heading 2', desc: 'Medium section heading', icon: Heading2, prefix: '## ' },
+  { key: 'h3', label: 'Heading 3', desc: 'Small section heading', icon: Heading3, prefix: '### ' },
+  { key: 'todo', label: 'To-do list', desc: 'Track tasks with a checkbox', icon: ListTodo, prefix: '- [ ] ' },
+  { key: 'bullet', label: 'Bulleted list', desc: 'Simple bulleted list', icon: List, prefix: '- ' },
+  { key: 'num', label: 'Numbered list', desc: 'List with numbering', icon: ListOrdered, prefix: '1. ' },
+  { key: 'quote', label: 'Quote', desc: 'Capture a quote', icon: Quote, prefix: '> ' },
+  { key: 'div', label: 'Divider', desc: 'Visual section break', icon: Minus, prefix: '---\n' },
+  { key: 'code', label: 'Code', desc: 'Code snippet block', icon: Code, prefix: '```\n' },
+] as const
 
 type LinkedBookmark = { id: string; url: string; title: string | null; favicon: string | null; ogImage: string | null; ogTitle: string | null; ogDescription: string | null; description: string | null }
 type PageDetail = PageSummary & { content: string; version: number; bookmarks: { bookmark: LinkedBookmark }[] }
@@ -35,6 +54,10 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
   const [linkQuery, setLinkQuery] = useState('')
   const [results, setResults] = useState<LinkedBookmark[]>([])
   const [linkOpen, setLinkOpen] = useState(false)
+  const [slash, setSlash] = useState<{ query: string; start: number } | null>(null)
+  const [slashIndex, setSlashIndex] = useState(0)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const pendingCaret = useRef<number | null>(null)
   const activePage = useRef(initialId)
   const loadSequence = useRef(0)
   const selectionSequence = useRef(0)
@@ -101,7 +124,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     const sequence = ++loadSequence.current
     const res = await fetch(`/api/pages/${id}`)
     if (sequence !== loadSequence.current || activePage.current !== id) return
-    if (!res.ok) { setPage(null); return }
+    if (!res.ok) { setPage(null); notifyActivePage(null); return }
     const data: PageDetail = await res.json()
     if (sequence !== loadSequence.current || activePage.current !== id) return
     if (typeof data.version === 'number') autosave.setVersion(data.id, data.version)
@@ -109,6 +132,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     setPage(data)
     setTitle(data.title)
     setContent(draft ?? data.content)
+    notifyActivePage(data.title)
     if (draft !== undefined || !data.content) setMode('edit')
   }, [autosave])
 
@@ -143,6 +167,27 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     void select(initialId)
   }, [initialId])
 
+  // Sidebar mutations (rename, pin, delete) announce themselves; keep the
+  // page list in step and drop the detail view when the open page is gone.
+  useEffect(() => {
+    const reload = () => {
+      void loadPages().then((data) => {
+        if (activePage.current && !data.some((p) => p.id === activePage.current)) {
+          activePage.current = null
+          setActiveId(null)
+          setPage(null)
+          notifyActivePage(null)
+          router.replace('/pages')
+        }
+      })
+    }
+    window.addEventListener(PAGES_CHANGED, reload)
+    return () => window.removeEventListener(PAGES_CHANGED, reload)
+  }, [loadPages, router])
+
+  // Leaving the pages workspace clears the breadcrumb title.
+  useEffect(() => () => { notifyActivePage(null) }, [])
+
   const patch = async (body: Record<string, unknown>) => {
     if (!activeId || page?.id !== activeId) return null
     const res = await fetch(`/api/pages/${page.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -169,6 +214,39 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     autosave.edit(page.id, v)
   }
 
+  // Show the block menu only while the caret sits on a bare "/token" line.
+  const updateSlash = (text: string, caret: number) => {
+    const lineStart = text.lastIndexOf('\n', caret - 1) + 1
+    const line = text.slice(lineStart, caret)
+    const m = /^\/([\w-]*)$/.exec(line)
+    if (m) { setSlash({ query: m[1].toLowerCase(), start: lineStart }); setSlashIndex(0) }
+    else setSlash(null)
+  }
+
+  const slashFiltered = SLASH_BLOCKS.filter((b) => !slash?.query || b.key.includes(slash.query) || b.label.toLowerCase().includes(slash.query))
+
+  const applyBlock = (block: (typeof SLASH_BLOCKS)[number]) => {
+    const ta = textareaRef.current
+    if (!slash || !ta) return
+    const caret = ta.selectionStart
+    const next = content.slice(0, slash.start) + block.prefix + content.slice(caret)
+    pendingCaret.current = slash.start + block.prefix.length
+    onContentChange(next)
+    setSlash(null)
+  }
+
+  // Restore the caret after a programmatic content rewrite (slash insert,
+  // "[] " shortcut). Runs once the new content has reached the textarea.
+  useEffect(() => {
+    if (pendingCaret.current === null || mode !== 'edit') return
+    const ta = textareaRef.current
+    if (!ta) return
+    const c = pendingCaret.current
+    pendingCaret.current = null
+    ta.focus()
+    ta.setSelectionRange(c, c)
+  }, [content, mode])
+
   const saveTitle = async () => {
     if (!page) return
     const t = title.trim()
@@ -177,6 +255,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     if (t === page.title) return
     if (await patch({ title: t })) {
       setPage(current => current?.id === page.id ? { ...current, title: t } : current)
+      notifyActivePage(t)
       await loadPages(); notify()
     }
   }
@@ -295,7 +374,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
             <input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} className="min-w-0 flex-1 bg-transparent font-display text-3xl font-bold outline-none" aria-label="Page title" />
             <span className="text-xs text-muted-foreground">{saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : 'Saved'}</span>
             {saveState === 'dirty' && <Button size="sm" variant="outline" onClick={() => autosave.flush(page.id)}>Save now</Button>}
-            <Button variant="ghost" size="icon-sm" title={mode === 'edit' ? 'Preview' : 'Edit'} onClick={() => setMode(mode === 'edit' ? 'preview' : 'edit')}>{mode === 'edit' ? <Eye className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}</Button>
+            <Button variant="ghost" size="icon-sm" title={mode === 'edit' ? 'Preview' : 'Edit'} onClick={() => { setMode(mode === 'edit' ? 'preview' : 'edit'); setSlash(null) }}>{mode === 'edit' ? <Eye className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}</Button>
             <Button variant="ghost" size="icon-sm" title={page.pinned ? 'Unpin' : 'Pin to sidebar'} onClick={togglePin}>{page.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}</Button>
             <Button variant="ghost" size="icon-sm" title="Move tab left" onClick={() => move(-1)}><ChevronLeft className="h-4 w-4" /></Button>
             <Button variant="ghost" size="icon-sm" title="Move tab right" onClick={() => move(1)}><ChevronRight className="h-4 w-4" /></Button>
@@ -304,7 +383,69 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
           </div>
 
           {mode === 'edit' ? (
-            <Textarea value={content} onChange={(e) => onContentChange(e.target.value)} placeholder="Write Markdown notes… paste links, lists, thoughts." className="min-h-[260px] font-mono text-sm" />
+            <div className="relative">
+              <Textarea
+                ref={textareaRef}
+                value={content}
+                onChange={(e) => { onContentChange(e.target.value); updateSlash(e.target.value, e.target.selectionStart) }}
+                onClick={(e) => updateSlash(e.currentTarget.value, e.currentTarget.selectionStart)}
+                onBlur={() => setSlash(null)}
+                onKeyDown={(e) => {
+                  // While the slash menu is open, arrows/Enter/Tab/Escape drive it.
+                  if (slash && slashFiltered.length > 0) {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex((i) => (i + 1) % slashFiltered.length); return }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIndex((i) => (i - 1 + slashFiltered.length) % slashFiltered.length); return }
+                    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applyBlock(slashFiltered[Math.min(slashIndex, slashFiltered.length - 1)]); return }
+                    if (e.key === 'Escape') { e.preventDefault(); setSlash(null); return }
+                  }
+                  // Notion Markdown shortcut: "[]" + space becomes a to-do item.
+                  if (e.key === ' ') {
+                    const ta = e.currentTarget
+                    const caret = ta.selectionStart
+                    const lineStart = ta.value.lastIndexOf('\n', caret - 1) + 1
+                    if (ta.value.slice(lineStart, caret) === '[]') {
+                      e.preventDefault()
+                      const next = ta.value.slice(0, lineStart) + '- [ ] ' + ta.value.slice(caret)
+                      pendingCaret.current = lineStart + '- [ ] '.length
+                      onContentChange(next)
+                    }
+                  }
+                }}
+                placeholder="Write Markdown notes… type / for blocks, paste links, lists, thoughts."
+                className="min-h-[260px] font-mono text-sm"
+              />
+              {slash && slashFiltered.length > 0 && (
+                <div
+                  onMouseDown={(e) => e.preventDefault()}
+                  role="listbox"
+                  aria-label="Blocks to insert"
+                  className="absolute left-2 top-full z-20 mt-1 w-72 rounded-lg border bg-popover p-1 shadow-lg"
+                >
+                  <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Basic blocks</p>
+                  <div className="max-h-64 overflow-y-auto">
+                    {slashFiltered.map((b, i) => (
+                      <button
+                        key={b.key}
+                        type="button"
+                        role="option"
+                        aria-selected={i === slashIndex}
+                        onMouseEnter={() => setSlashIndex(i)}
+                        onClick={() => applyBlock(b)}
+                        className={cn('flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left', i === slashIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50')}
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border bg-card">
+                          <b.icon className="h-3.5 w-3.5 text-muted-foreground" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">{b.label}</span>
+                          <span className="block truncate text-xs text-muted-foreground">{b.desc}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="prose prose-sm max-w-none dark:prose-invert min-h-[80px] cursor-text" onDoubleClick={() => setMode('edit')}>
               {content ? (

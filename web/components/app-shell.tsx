@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from '@/components/sidebar'
 import { TopBar } from '@/components/top-bar'
 import { AddBookmarkDialog } from '@/components/add-bookmark-dialog'
+import { QuickFind } from '@/components/quick-find'
 
 export type Bookmark = {
   id: string
@@ -50,7 +51,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
+  const [quickFindOpen, setQuickFindOpen] = useState(false)
   const [alerts, setAlerts] = useState<any[]>([])
   const [me, setMe] = useState<{ isAdmin: boolean; viewingAs: { name: string | null; email: string } | null } | null>(null)
 
@@ -108,14 +109,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.refresh()
   }, [router])
 
-  const onSearch = useCallback((q: string) => {
-    setSearchQuery(q)
-    window.dispatchEvent(new CustomEvent('computer:search', { detail: q }))
-    if (pathname !== '/bookmarks') {
-          router.push(`/bookmarks?search=${encodeURIComponent(q)}`)
-    }
-  }, [pathname, router])
-
   const dismissAlert = useCallback(async (bookmarkId: string) => {
     try {
       const res = await fetch(`/api/alerts/${bookmarkId}`, { method: 'DELETE' })
@@ -128,7 +121,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} pathname={pathname} isAdmin={!!me?.isAdmin} />
+      <Sidebar open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} onQuickFind={() => setQuickFindOpen(true)} pathname={pathname} isAdmin={!!me?.isAdmin} />
       <div className="flex flex-1 flex-col overflow-hidden">
         {me?.viewingAs && (
           <div className="flex items-center justify-center gap-3 bg-amber-500 px-4 py-1.5 text-sm font-medium text-amber-950">
@@ -138,12 +131,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
         <TopBar
           user={session.user as any}
-          onSearch={onSearch}
-          searchQuery={searchQuery}
           alerts={alerts}
           onDismissAlert={dismissAlert}
           onAddBookmark={() => setAddDialogOpen(true)}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          onQuickFind={() => setQuickFindOpen(true)}
         />
         <main className="flex-1 overflow-auto p-6">
           {children}
@@ -153,6 +145,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         open={addDialogOpen}
         onClose={() => setAddDialogOpen(false)}
         onCreated={() => { setAddDialogOpen(false); refreshPage() }}
+      />
+      <QuickFind
+        open={quickFindOpen}
+        onOpenChange={setQuickFindOpen}
+        isAdmin={!!me?.isAdmin}
+        onAddBookmark={() => setAddDialogOpen(true)}
       />
     </div>
   )

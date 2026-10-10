@@ -134,7 +134,7 @@ try {
   assert.equal(login.status(), 200)
   console.log('PASS: forged logins rejected; legitimate login works')
 
-  const editor = page.getByPlaceholder('Write Markdown notes… paste links, lists, thoughts.')
+  const editor = page.getByPlaceholder('Write Markdown notes… type / for blocks, paste links, lists, thoughts.')
   await page.goto(`${base}/pages?id=a`)
   await editor.fill('A edits before switching')
   await page.getByRole('button', { name: 'Page B', exact: true }).click()

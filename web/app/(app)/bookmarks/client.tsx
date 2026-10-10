@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import type { Bookmark } from '@/components/app-shell'
 import { fetchBookmarks } from '@/lib/bookmarks'
 
-export function BookmarksClient() {
+export function BookmarksClient({ initialSearch = null, initialOpen = null }: { initialSearch?: string | null; initialOpen?: string | null }) {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [sharedBookmarks, setSharedBookmarks] = useState<Bookmark[]>([])
   const [loading, setLoading] = useState(true)
@@ -58,13 +58,23 @@ export function BookmarksClient() {
     return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', reload); abortRef.current?.abort() }
   }, [load, loadShared, search])
   useEffect(() => { const timer = setTimeout(loadShared, 0); return () => clearTimeout(timer) }, [loadShared])
-  // Top-bar search lands here (this view replaced the old dashboard).
+  // Quick Find and the dashboard redirect land here with ?search=; the prop
+  // comes from the server component so query changes apply without a remount.
   useEffect(() => {
-    const timer = setTimeout(() => setSearch(new URLSearchParams(window.location.search).get('search') || ''), 0)
-    const handler = (event: Event) => setSearch((event as CustomEvent<string>).detail)
-    window.addEventListener('computer:search', handler)
-    return () => { clearTimeout(timer); window.removeEventListener('computer:search', handler) }
-  }, [])
+    const timer = setTimeout(() => setSearch(initialSearch || ''), 0)
+    return () => clearTimeout(timer)
+  }, [initialSearch])
+  // Quick Find deep-links straight to a bookmark's detail sheet via ?open=<id>.
+  useEffect(() => {
+    if (!initialOpen) return
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/bookmarks/${encodeURIComponent(initialOpen)}`)
+        if (res.ok) setSelected(await res.json())
+      } catch { /* stale or inaccessible id; the list still renders */ }
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [initialOpen])
 
   const displayBookmarks = tab === 'mine' ? bookmarks : sharedBookmarks
   const sorted = [...(displayBookmarks ?? [])].sort((a: any, b: any) => {

@@ -12,7 +12,7 @@ import type { Bookmark, TagWithCount } from '@/components/app-shell'
 import { fetchBookmarks } from '@/lib/bookmarks'
 import { invalidateReference } from '@/lib/reference-data'
 
-export function TagsClient() {
+export function TagsClient({ initialTag = null }: { initialTag?: string | null }) {
   const [tags, setTags] = useState<TagWithCount[]>([])
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
@@ -59,6 +59,12 @@ export function TagsClient() {
   }, [])
 
   useEffect(() => { const timer = setTimeout(loadTags, 0); return () => clearTimeout(timer) }, [loadTags])
+  // Quick Find deep-links to a tag via /tags?tag=<id>.
+  useEffect(() => {
+    if (!initialTag) return
+    const timer = setTimeout(() => setSelectedTag(initialTag), 0)
+    return () => clearTimeout(timer)
+  }, [initialTag])
   useEffect(() => { const timer = setTimeout(() => { if (selectedTag) loadBookmarks(selectedTag) }, 0); return () => clearTimeout(timer) }, [selectedTag, loadBookmarks])
   useEffect(() => { const reload = () => { loadTags(); if (selectedTag) loadBookmarks(selectedTag) }; window.addEventListener('computer:bookmarks-changed', reload); return () => window.removeEventListener('computer:bookmarks-changed', reload) }, [loadTags, loadBookmarks, selectedTag])
 
