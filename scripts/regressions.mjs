@@ -17,6 +17,9 @@ let delaySaves = 0
 let activeSaves = 0
 let maxConcurrentSaves = 0
 let paginatedRequests = 0
+// Counts every PATCH /api/pages/* attempt (including 409/500 rejections) so
+// tests can prove a paused conflict issues no further saves (review TEST-01).
+let patchAttempts = 0
 const api = http.createServer(async (req, res) => {
   try {
     let raw = ''
@@ -31,6 +34,7 @@ const api = http.createServer(async (req, res) => {
     else if (url.pathname.startsWith('/api/pages/')) {
       const id = url.pathname.split('/')[3]
       if (req.method === 'PATCH') {
+        patchAttempts++
         if (failSaves) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":"Fixture save failed"}'); return }
         const target = pages.get(id)
         // Optimistic concurrency (DATA-01): a stale base version is a 409.
@@ -169,6 +173,53 @@ try {
   await page.getByRole('button', { name: 'Save now', exact: true }).click()
   await eventually(() => pages.get('b').content === 'Recover this failed draft', 'Retry did not persist draft')
   console.log('PASS: failed saves block switching, survive reload, and can be retried')
+
+  // Cross-session conflict (review DATA-04/TEST-01): after another "device"
+  // saves a newer version, the 409 pauses autosave in a distinct conflict
+  // state. Typing must not schedule another save; only the explicit
+  // overwrite button may replace the remote content.
+  await page.goto(`${base}/pages?id=a`)
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await editor.fill('Local draft before conflict')
+  await eventually(() => pages.get('a').content === 'Local draft before conflict', 'Draft did not save before the conflict')
+  pages.get('a').content = 'Remote edit wins'
+  pages.get('a').version++
+  await editor.fill('Edit after remote change')
+  await page.getByText('This page was changed elsewhere', { exact: true }).waitFor()
+  const attemptsAtConflict = patchAttempts
+  await editor.fill('Typing must not overwrite')
+  await new Promise(resolve => setTimeout(resolve, 1200))
+  assert.equal(patchAttempts, attemptsAtConflict, 'Typing during a conflict scheduled another save')
+  assert.equal(pages.get('a').content, 'Remote edit wins', 'Conflict silently overwrote the remote content')
+  await page.getByRole('button', { name: 'Overwrite with my draft', exact: true }).click()
+  await eventually(() => pages.get('a').content === 'Typing must not overwrite', 'Explicit overwrite did not persist')
+  console.log('PASS: conflicts pause autosave until an explicit overwrite')
+
+  // Recovery after reload (review DATA-03/TEST-01): a failed draft remembers
+  // the server version it was based on. When another session saved in the
+  // meantime, recovery enters the conflict state instead of silently
+  // rebasing the stale draft onto the newer version.
+  failSaves = true
+  await page.goto(`${base}/pages?id=b`)
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await editor.fill('Draft with an older base')
+  await page.getByText('Could not save page. Your draft is kept in this tab; retry saving.').first().waitFor()
+  pages.get('b').content = 'Remote saved while draft failed'
+  pages.get('b').version++
+  failSaves = false
+  await page.reload()
+  await eventually(() => editor.inputValue().then(value => value === 'Draft with an older base'), 'Draft not recovered after reload')
+  await page.getByText('This page was changed elsewhere', { exact: true }).waitFor()
+  // Snapshot AFTER recovery: the reload itself lets the departing page flush
+  // its dirty draft once (the fixture rejects it with a 409 against the newer
+  // version). What must not happen is any save from the recovered session.
+  const attemptsAfterRecovery = patchAttempts
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  assert.equal(patchAttempts, attemptsAfterRecovery, 'Recovered draft saved without an explicit resolution')
+  assert.equal(pages.get('b').content, 'Remote saved while draft failed', 'Recovery rebased onto and clobbered the newer version')
+  await page.getByRole('button', { name: 'Discard my draft and load latest', exact: true }).click()
+  await eventually(() => editor.inputValue().then(value => value === 'Remote saved while draft failed'), 'Discard did not load the remote content')
+  console.log('PASS: recovered drafts keep their original base and conflict instead of rebasing')
 
   await page.goto(`${base}/bookmarks`)
   await eventually(() => page.locator('tbody tr').count().then(n => n === 205), 'Collection truncated at 200')

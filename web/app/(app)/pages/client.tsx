@@ -98,15 +98,16 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
       throw error
     }
     if (res.status === 409) {
-      // Another session saved first: re-base on the server revision and keep
-      // the local draft. The user is told the next save wins over the newer
-      // version, and autosave retries against the fresh base.
+      // Another session saved first. Review DATA-04: the queue enters a
+      // paused conflict state instead of adopting the remote version, so
+      // nothing overwrites the newer content until the user explicitly
+      // chooses to overwrite, discard, or copy the draft.
       let serverVersion: number | undefined
       try {
         const latest = await fetch(`/api/pages/${id}`, { cache: 'no-store' }).then(r => (r.ok ? r.json() : null))
         if (latest && typeof latest.version === 'number') serverVersion = latest.version
-      } catch { /* keep the stale base; the next save surfaces the conflict again */ }
-      toast.error('This page was saved in another tab or device. Your text is kept here; saving again overwrites that newer version.')
+      } catch { /* keep the stale base; the conflict state pauses autosave either way */ }
+      toast.error('This page was saved in another tab or device. Autosave is paused so nothing is overwritten until you resolve the conflict.')
       throw new PageConflictError(serverVersion)
     }
     if (!res.ok) {
@@ -149,7 +150,10 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     const data: PageDetail = await res.json()
     if (sequence !== loadSequence.current || activePage.current !== id) return
     if (typeof data.version === 'number') autosave.setVersion(data.id, data.version)
-    const draft = autosave.draft(id)
+    // Review DATA-03: recovery compares the draft's original base version
+    // with the freshly fetched server version; a mismatch pauses autosave in
+    // the conflict state instead of silently rebasing onto the newer save.
+    const draft = autosave.restore(id, data.version)
     setPage(data)
     setTitle(data.title)
     setContent(draft ?? data.content)
@@ -302,11 +306,35 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
 
   const download = async () => {
     if (!activeId) return
-    if (!await autosave.flush(activeId)) return
+    // A paused conflict can never flush; exporting the server copy is still
+    // useful, so only ordinary save failures block the download.
+    if (autosave.conflictVersion(activeId) === null && !await autosave.flush(activeId)) return
     const a = document.createElement('a')
     a.href = `/api/pages/${activeId}/markdown`
     a.download = ''
     document.body.appendChild(a); a.click(); a.remove()
+  }
+
+  // Explicit conflict resolutions (review DATA-04). Typing is never consent;
+  // each path is a deliberate click.
+  const overwriteRemote = async () => {
+    if (!activeId) return
+    if (await autosave.resolveOverwrite(activeId)) toast.success('Your draft replaced the newer version')
+    else toast.error('Could not save page. Your draft is kept in this tab; retry saving.')
+  }
+  const discardDraft = async () => {
+    if (!activeId) return
+    autosave.discard(activeId)
+    await loadPage(activeId)
+  }
+  const copyDraft = async () => {
+    const res = await fetch('/api/pages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: `${page?.title ?? 'Untitled'} (draft copy)`, content }),
+    })
+    if (!res.ok) { toast.error('Could not create the copy'); return }
+    toast.success('Draft copied to a new page')
+    await loadPages(); notify()
   }
 
   const remove = async () => {
@@ -426,7 +454,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
         <div className="mx-auto w-full max-w-4xl flex-1 overflow-y-auto px-6 py-8">
           <div className="mb-6 flex flex-wrap items-center gap-2">
             <input value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} className="min-w-0 flex-1 bg-transparent font-display text-3xl font-bold outline-none" aria-label="Page title" />
-            <span className="text-xs text-muted-foreground">{saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : 'Saved'}</span>
+            <span className="text-xs text-muted-foreground">{saveState === 'saving' ? 'Saving…' : saveState === 'dirty' ? 'Unsaved' : saveState === 'conflict' ? 'Conflict' : 'Saved'}</span>
             {saveState === 'dirty' && <Button size="sm" variant="outline" onClick={() => autosave.flush(page.id)}>Save now</Button>}
             <Button variant="ghost" size="icon-sm" title={mode === 'edit' ? 'Preview' : 'Edit'} onClick={() => { setMode(mode === 'edit' ? 'preview' : 'edit'); setSlash(null) }}>{mode === 'edit' ? <Eye className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}</Button>
             <Button variant="ghost" size="icon-sm" title={page.pinned ? 'Unpin' : 'Pin to sidebar'} onClick={togglePin}>{page.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}</Button>
@@ -435,6 +463,21 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
             <Button variant="ghost" size="icon-sm" title="Download .md" onClick={download}><Download className="h-4 w-4" /></Button>
             <Button variant="ghost" size="icon-sm" title="Delete page" onClick={remove}><Trash2 className="h-4 w-4 text-destructive" /></Button>
           </div>
+
+          {saveState === 'conflict' && (
+            <div role="alert" className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
+              <p className="font-medium text-foreground">This page was changed elsewhere</p>
+              <p className="mt-1 text-muted-foreground">
+                Your local draft is based on an older version, so autosave is paused and nothing
+                is overwritten until you choose. Your draft stays in the editor below.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="destructive" onClick={overwriteRemote}>Overwrite with my draft</Button>
+                <Button size="sm" variant="outline" onClick={copyDraft}>Save my draft as a new page</Button>
+                <Button size="sm" variant="outline" onClick={discardDraft}>Discard my draft and load latest</Button>
+              </div>
+            </div>
+          )}
 
           {mode === 'edit' ? (
             <div className="relative">

@@ -78,7 +78,11 @@ database. Do not run the initial schema against an already initialized database.
   menu (type `/` for headings, to-dos, lists, quotes, dividers and code) and
   the `[]` + space to-do shortcut, link collections, pinning, reorder/export.
   Saves are queued per page; unsaved drafts are kept in the current browser tab
-  for recovery after a failed save. Page switching waits for pending saves.
+  for recovery after a failed save, together with the server version they were
+  based on. Page switching waits for pending saves. When another tab or device
+  saved first, autosave pauses in an explicit conflict state — the editor
+  offers overwrite, save-as-copy and discard, and typing alone never
+  overwrites the newer version.
 - Kanban: custom columns, card moves, reorder; deleting a column moves cards.
 - Sharing: bookmarks, tags and calendar dates; recipients read shared content.
   Owners can revoke shares. Shared tags and dates expose the associated URLs.
