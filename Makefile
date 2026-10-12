@@ -1,4 +1,4 @@
-.PHONY: run docker stop docker-down db-up db-shell build vet test integration e2e logs migrate seed
+.PHONY: run docker stop docker-down db-up db-shell build vet test integration e2e logs migrate seed deploy
 run docker:
 	docker compose up -d --build
 stop docker-down:
@@ -28,3 +28,5 @@ migrate:
 	docker compose run --rm migrate
 seed:
 	docker compose exec -e SEED_EMAIL -e SEED_PASSWORD -e SEED_NAME app /computer --seed
+deploy:
+	./scripts/deploy.sh

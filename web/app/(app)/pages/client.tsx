@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -16,6 +16,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import { PageAutosave, PageConflictError, type PageSaveState } from '@/lib/page-autosave'
 import { PAGES_CHANGED, nextUntitledTitle, notifyActivePage, notifyPagesChanged, type PageSummary } from '@/lib/pages'
+import { fetchLinkPreview } from '@/lib/link-preview'
+import { LinkPreviewCard } from '@/components/link-preview-card'
+import type { Element, ElementContent } from 'hast'
 
 export { PAGES_CHANGED }
 
@@ -40,6 +43,24 @@ type PageDetail = PageSummary & { content: string; version: number; bookmarks: {
 
 const notify = notifyPagesChanged
 const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, '') } catch { return u } }
+
+const textOf = (nodes: ElementContent[]): string =>
+  nodes.map((n) => (n.type === 'text' ? n.value : n.type === 'element' ? textOf(n.children) : '')).join('')
+
+// A paragraph whose only content is a single external link — a bare URL
+// autolinked by GFM or a lone [label](url) — renders as a Notion-style
+// preview card instead of a plain <p><a>. Links woven into sentences stay
+// inline text; the Markdown source remains the source of truth either way.
+function standaloneLink(node: Element | undefined): { href: string; label: string } | null {
+  if (!node) return null
+  const kids = node.children.filter((c) => !(c.type === 'text' && c.value.trim() === ''))
+  if (kids.length !== 1) return null
+  const a = kids[0]
+  if (a.type !== 'element' || a.tagName !== 'a') return null
+  const href = a.properties?.href
+  if (typeof href !== 'string' || !/^https?:\/\//i.test(href)) return null
+  return { href, label: textOf(a.children) }
+}
 
 export function PagesClient({ initialId }: { initialId: string | null }) {
   const router = useRouter()
@@ -340,6 +361,39 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     }
   }
 
+  // Notion-style paste: a bare URL lands in the textarea untouched, and once
+  // its preview resolves we offer to upgrade it to a titled Markdown link.
+  // Nothing is rewritten without an explicit click, so undo stays intact.
+  const offerTitleForPastedUrl = (url: string) => {
+    void fetchLinkPreview(url).then((p) => {
+      const raw = p?.ogTitle || p?.title
+      if (!raw) return
+      const title = raw.replace(/[\[\]\n]/g, ' ').trim()
+      if (!title || title === url) return
+      toast.info('Paste as titled link?', {
+        description: title,
+        duration: 10000,
+        action: {
+          label: 'Use title',
+          onClick: () => {
+            const ta = textareaRef.current
+            if (!ta) return
+            const idx = ta.value.indexOf(url)
+            if (idx < 0) return
+            const markdown = `[${title}](${url})`
+            pendingCaret.current = idx + markdown.length
+            onContentChange(ta.value.slice(0, idx) + markdown + ta.value.slice(idx + url.length))
+          },
+        },
+      })
+    })
+  }
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData('text/plain').trim()
+    if (/^https?:\/\/\S+$/i.test(text)) offerTitleForPastedUrl(text)
+  }
+
   const visible = pages.filter((p) => p.title.toLowerCase().includes(filter.toLowerCase()))
   const looksLikeUrl = /^(https?:\/\/)?[\w-]+(\.[\w-]+)+/i.test(linkQuery.trim())
 
@@ -389,6 +443,7 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
                 value={content}
                 onChange={(e) => { onContentChange(e.target.value); updateSlash(e.target.value, e.target.selectionStart) }}
                 onClick={(e) => updateSlash(e.currentTarget.value, e.currentTarget.selectionStart)}
+                onPaste={onPaste}
                 onBlur={() => setSlash(null)}
                 onKeyDown={(e) => {
                   // While the slash menu is open, arrows/Enter/Tab/Escape drive it.
@@ -449,7 +504,20 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
           ) : (
             <div className="prose prose-sm max-w-none dark:prose-invert min-h-[80px] cursor-text" onDoubleClick={() => setMode('edit')}>
               {content ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{content}</ReactMarkdown>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    p: ({ node, ...props }) => {
+                      const link = standaloneLink(node)
+                      return link ? (
+                        <LinkPreviewCard url={link.href} label={link.label !== link.href ? link.label : undefined} />
+                      ) : (
+                        <p {...props} />
+                      )
+                    },
+                    a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+                  }}
+                >{content}</ReactMarkdown>
               ) : (
                 <p className="text-muted-foreground">No notes yet. Double-click or press the pencil to write.</p>
               )}
