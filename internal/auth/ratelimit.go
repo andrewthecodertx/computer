@@ -1,14 +1,3 @@
-package auth
-
-import (
-	"net"
-	"net/http"
-	"sort"
-	"strconv"
-	"sync"
-	"time"
-)
-
 // Abuse protection for the unauthenticated auth endpoints: a fixed-window
 // counter per IP plus consecutive-failure lockout per (IP, email) on login.
 //
@@ -19,11 +8,30 @@ import (
 // operator fronting :8080 with their own same-host proxy accepts the same
 // trust they grant localhost today.
 //
-// Code review SEC-01 flagged that users behind one reverse proxy share a
-// bucket and recommended trusting X-Forwarded-For from an allowlisted proxy.
-// Keying strictly on RemoteAddr and never trusting forwarded headers is a
-// deliberate architectural decision for this deployment (see AGENTS.md);
-// do not "fix" it silently.
+// Review AUTH-RATE: keying strictly on the direct peer made every browser
+// behind the Next proxy share one bucket (in Compose, Go's peer is always
+// the web container). The trusted Next server therefore forwards the browser
+// IP it observed, signed with HMAC-SHA256 under the shared auth secret
+// (web/lib/api.ts). Go only accepts the forwarded identity when the
+// signature verifies, so hostile clients cannot forge it; unsigned or
+// invalid values fall back to the direct peer. In production the nginx
+// template overwrites X-Real-IP with the true peer before Next sees it —
+// never expose Next directly to the internet without such a boundary.
+
+package auth
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"github.com/andrew/go-computer/internal/config"
+	"net"
+	"net/http"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
+)
 
 const (
 	loginIPLimit      = 20          // logins per IP per window
@@ -160,10 +168,47 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-// isLoopback reports whether the direct peer is localhost. Deliberately based
-// on RemoteAddr only — X-Forwarded-For is client-controlled and never trusted.
+// Headers carrying the proxy-attested browser IP (review AUTH-RATE). The
+// signature is HMAC-SHA256(secret, ip) in hex, computed by the trusted Next
+// server; anything else falls back to the direct peer address.
+const (
+	headerClientIP  = "X-Computer-Client-Ip"
+	headerClientSig = "X-Computer-Client-Sig"
+)
+
+func signedForwardIP(r *http.Request) (string, bool) {
+	ip := r.Header.Get(headerClientIP)
+	sig := r.Header.Get(headerClientSig)
+	if ip == "" || sig == "" || net.ParseIP(ip) == nil {
+		return "", false
+	}
+	secret := config.Load().Secret()
+	if secret == "" {
+		return "", false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ip))
+	if !hmac.Equal([]byte(hex.EncodeToString(mac.Sum(nil))), []byte(sig)) {
+		return "", false
+	}
+	return ip, true
+}
+
+// EffectiveClientIP is the identity rate limiting buckets on: the signed
+// forwarded browser IP when the trusted proxy attested one, else the direct
+// peer. Never trust arbitrary forwarded headers here.
+func EffectiveClientIP(r *http.Request) string {
+	if ip, ok := signedForwardIP(r); ok {
+		return ip
+	}
+	return clientIP(r)
+}
+
+// isLoopback reports whether the effective client is localhost. Based on the
+// direct peer or the proxy-signed forwarded IP only — plain X-Forwarded-For
+// is client-controlled and never trusted.
 func isLoopback(r *http.Request) bool {
-	ip := net.ParseIP(clientIP(r))
+	ip := net.ParseIP(EffectiveClientIP(r))
 	return ip != nil && ip.IsLoopback()
 }
 
@@ -172,10 +217,11 @@ func tooManyRequests(w http.ResponseWriter, retry time.Duration) {
 	failure(w, http.StatusTooManyRequests, "Too many attempts, slow down")
 }
 
-// RateLimitLogin caps login attempts per IP for non-loopback peers.
+// RateLimitLogin caps login attempts per effective client IP for
+// non-loopback peers.
 func RateLimitLogin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isLoopback(r) && !loginIPs.allow(clientIP(r), loginIPLimit, loginIPWindow, time.Now()) {
+		if !isLoopback(r) && !loginIPs.allow(EffectiveClientIP(r), loginIPLimit, loginIPWindow, time.Now()) {
 			tooManyRequests(w, loginIPWindow)
 			return
 		}
@@ -183,10 +229,11 @@ func RateLimitLogin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// RateLimitSignup caps account creation per IP for non-loopback peers.
+// RateLimitSignup caps account creation per effective client IP for
+// non-loopback peers.
 func RateLimitSignup(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isLoopback(r) && !signupIPs.allow(clientIP(r), signupIPLimit, signupIPWindow, time.Now()) {
+		if !isLoopback(r) && !signupIPs.allow(EffectiveClientIP(r), signupIPLimit, signupIPWindow, time.Now()) {
 			tooManyRequests(w, signupIPWindow)
 			return
 		}

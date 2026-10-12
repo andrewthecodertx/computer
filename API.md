@@ -27,10 +27,22 @@ The browser's NextAuth `/api/auth/*` endpoints remain on the Next server.
 Direct Go API consumers use the `computer_session` cookie from login.
 Go login accepts JSON and rejects foreign browser origins. The custom Next.js
 login endpoint also requires the configured same-origin `Origin` header.
+Login and signup are throttled per client IP (429 with `Retry-After`), plus a
+consecutive-failure lockout per IP+email on login; loopback clients are
+exempt. Browser traffic arrives through the trusted Next proxy, which
+forwards the observed client IP in `X-Computer-Client-Ip` signed with
+HMAC-SHA256 under the shared secret (`X-Computer-Client-Sig`); Go buckets on
+that identity only when the signature verifies and falls back to the direct
+peer otherwise, so proxied browsers neither share one bucket nor forge
+another identity.
 `ADMIN_EMAILS` reserves administrator addresses for operator provisioning and
 disables public first-admin bootstrap while set. Automatic promotion of an
 existing allowlisted user requires `emailVerified`; DB administrator roles
-remain authoritative.
+remain authoritative. First-signup administrator promotion is one-shot: once
+bootstrap completion is recorded (AppSetting `adminBootstrap`), the absence
+of a qualifying administrator — e.g. after demoting the last one — never
+re-opens promotion through signup. Recovery is operator-driven
+(`ADMIN_EMAILS` + `make seed`, or promotion by an existing admin).
 
 ## Bookmarks
 

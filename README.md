@@ -30,7 +30,10 @@ On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp`.
 - Go API: **http://localhost:8080** (local access; endpoints in [API.md](API.md)).
 - PostgreSQL: `db:5432` inside Docker; not published on the host.
 - With `ADMIN_EMAILS` empty, the first non-`@example.com` account becomes
-  administrator. Addresses in `ADMIN_EMAILS` are reserved for
+  administrator and completes a one-shot bootstrap: afterwards signup never
+  auto-promotes again, even if the last administrator is demoted or removed
+  — recovery is operator-driven (`ADMIN_EMAILS` + seed, or promotion by an
+  existing admin). Addresses in `ADMIN_EMAILS` are reserved for
   operator-provisioned accounts; automatic
   promotion requires a verified email. Existing accounts are preserved on restart.
 - `docker compose down` stops the stack. It does not delete the database volume.

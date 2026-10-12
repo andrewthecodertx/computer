@@ -34,4 +34,18 @@ CREATE TABLE IF NOT EXISTS "SignalCheckpoint" (
   "lastUid" bigint NOT NULL,
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
+-- One-shot administrator bootstrap state (review AUTH-06): once recorded,
+-- signup never auto-promotes again; recovery is operator-driven.
+CREATE TABLE IF NOT EXISTS "AppSetting" (
+  key text PRIMARY KEY,
+  value jsonb NOT NULL DEFAULT '{}',
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+-- Installations that already have a qualifying administrator completed
+-- bootstrap before this ledger existed; record it so demoting that
+-- administrator cannot re-open first-signup promotion.
+INSERT INTO "AppSetting"(key,value)
+SELECT 'adminBootstrap',jsonb_build_object('completed',true)
+WHERE EXISTS (SELECT 1 FROM "User" WHERE role='ADMIN' AND email NOT LIKE '%@example.com')
+ON CONFLICT(key) DO NOTHING;
 COMMIT;

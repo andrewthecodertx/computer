@@ -245,6 +245,16 @@ CREATE INDEX "Signal_ownerId_occurredAt_idx" ON "Signal"("ownerId", "occurredAt"
 ALTER TABLE "Signal" ADD CONSTRAINT "Signal_sourceId_fkey"
   FOREIGN KEY ("sourceId") REFERENCES "SignalSource"(id) ON DELETE SET NULL;
 
+-- 2.16 AppSetting: server-owned singleton settings rows. 'adminBootstrap'
+-- records that initial provisioning completed (review AUTH-06), so the
+-- absence of a qualifying administrator never re-opens first-signup
+-- promotion after a demotion or removal.
+CREATE TABLE "AppSetting" (
+  key text PRIMARY KEY,
+  value jsonb NOT NULL DEFAULT '{}',
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+
 -- 2.16 SharedDate
 CREATE TABLE "SharedDate" (
   id text PRIMARY KEY,

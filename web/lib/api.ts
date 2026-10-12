@@ -1,5 +1,6 @@
 import 'server-only'
 import jwt from 'jsonwebtoken'
+import { createHmac } from 'node:crypto'
 import { auth } from '@/auth'
 import { cookies } from 'next/headers'
 
@@ -16,12 +17,20 @@ export const apiBase = () => process.env.API_BASE_URL || 'http://localhost:8080'
 export async function backendFetch(path: string, init: RequestInit = {}) {
   const session = await auth()
   const headers = new Headers(init.headers)
+  const secret = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET
   if (session?.user?.id) {
-    const secret = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET
     if (!secret) throw new Error('Missing authentication secret')
     headers.set('Authorization', `Bearer ${jwt.sign({ uid: session.user.id, ver: session.user.ver, typ: 'assertion' }, secret, {
       algorithm: 'HS256', issuer: 'computer', expiresIn: '60s',
     })}`)
+  }
+  // Review AUTH-RATE: attest the browser IP for Go's login/signup throttling
+  // so proxied users do not all share this server's peer-IP bucket. The
+  // HMAC signature keeps the header unforgeable by browsers; Go falls back
+  // to the direct peer when it is missing or invalid.
+  const clientIP = headers.get('x-computer-client-ip')
+  if (clientIP && secret) {
+    headers.set('x-computer-client-sig', createHmac('sha256', secret).update(clientIP).digest('hex'))
   }
   const viewAs = (await cookies()).get('computer_view_as')?.value
   if (viewAs) headers.set('Cookie', `computer_view_as=${encodeURIComponent(viewAs)}`)

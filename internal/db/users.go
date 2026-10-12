@@ -52,9 +52,20 @@ func (r *UserRepo) BumpTokenVersion(ctx context.Context, id string) error {
 type NewUserInput struct{ ID, Name, Email, Password, Role string }
 
 // A transaction-scoped lock serializes first-admin selection with signup.
+//
+// Review AUTH-06: initial provisioning is a one-shot lifecycle event,
+// distinct from administrator recovery. Once bootstrap completion is
+// recorded in AppSetting, the mere absence of a qualifying administrator —
+// e.g. after demoting or removing the last one — never re-opens
+// administrator assignment through signup. Recovery is operator-driven
+// (ADMIN_EMAILS + make seed, or promotion by an existing admin).
 func (r *UserRepo) Create(ctx context.Context, u *NewUserInput) (string, error) {
 	err := Transaction(ctx, r.db, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(927438)`); err != nil {
+			return err
+		}
+		var bootstrapDone bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT value->>'completed' FROM "AppSetting" WHERE key='adminBootstrap'),'false')::boolean`).Scan(&bootstrapDone); err != nil {
 			return err
 		}
 		var admins int
@@ -65,8 +76,17 @@ func (r *UserRepo) Create(ctx context.Context, u *NewUserInput) (string, error) 
 		if role == "" {
 			role = "USER"
 		}
-		if admins == 0 && len(config.AdminEmails()) == 0 && !isTestEmail(u.Email) {
+		promote := !bootstrapDone && admins == 0 && len(config.AdminEmails()) == 0 && !isTestEmail(u.Email) && role == "USER"
+		if promote {
 			role = "ADMIN"
+		}
+		// Record bootstrap completion as soon as the installation has (or was
+		// just given) a real administrator. A test-address signup with no
+		// admins present never claims the bootstrap.
+		if !bootstrapDone && (role == "ADMIN" || admins > 0) {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO "AppSetting"(key,value) VALUES('adminBootstrap',jsonb_build_object('completed',true)) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,"updatedAt"=now()`); err != nil {
+				return err
+			}
 		}
 		_, err := Insert(ctx, tx, "User", Object{"id": u.ID, "name": u.Name, "email": u.Email, "password": u.Password, "role": role})
 		return err

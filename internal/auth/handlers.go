@@ -121,7 +121,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if !isLoopback(r) {
-		if retry, locked := loginFailures.locked(clientIP(r)+"|"+email, time.Now()); locked {
+		if retry, locked := loginFailures.locked(EffectiveClientIP(r)+"|"+email, time.Now()); locked {
 			tooManyRequests(w, retry)
 			return
 		}
@@ -141,13 +141,13 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		if !isLoopback(r) {
-			loginFailures.noteFailure(clientIP(r)+"|"+email, time.Now())
+			loginFailures.noteFailure(EffectiveClientIP(r)+"|"+email, time.Now())
 		}
 		failure(w, 401, "Invalid credentials")
 		return
 	}
 	if !isLoopback(r) {
-		loginFailures.noteSuccess(clientIP(r) + "|" + email)
+		loginFailures.noteSuccess(EffectiveClientIP(r) + "|" + email)
 	}
 	if e = WriteSessionCookie(w, SessionUser{ID: u.ID, Role: u.Role, Ver: u.TokenVersion}, config.Load().Secret()); e != nil {
 		failure(w, 500, "Session unavailable")

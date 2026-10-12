@@ -129,6 +129,33 @@ func TestPublicBookmarksDoNotExposePrivateMetadata(t *testing.T) {
 	viewer.request("GET", "/api/public/bookmarks/"+id, nil, 404)
 }
 
+func TestAdminBootstrapIsOneShot(t *testing.T) {
+	srv, d := testServerDB(t)
+	// Fresh installation: the first signup completes bootstrap as admin.
+	admin, adminID := accountClient(t, srv.URL, "first@computer.test")
+	if admin.request("GET", "/api/me", nil, 200)["isAdmin"] != true {
+		t.Fatal("first signup on a fresh installation was not admin")
+	}
+	// Review AUTH-06 acceptance: demoting the last administrator must not
+	// re-open administrator assignment through signup.
+	if _, err := d.Exec(`UPDATE "User" SET role='USER' WHERE id=$1`, adminID); err != nil {
+		t.Fatal(err)
+	}
+	latecomer, _ := accountClient(t, srv.URL, "late@computer.test")
+	if latecomer.request("GET", "/api/me", nil, 200)["isAdmin"] != false {
+		t.Fatal("signup re-opened admin bootstrap after the last admin was demoted")
+	}
+	// Removing every administrator entirely does not re-open it either.
+	if _, err := d.Exec(`DELETE FROM "User" WHERE id=$1`, adminID); err != nil {
+		t.Fatal(err)
+	}
+	successor, _ := accountClient(t, srv.URL, "successor@computer.test")
+	if successor.request("GET", "/api/me", nil, 200)["isAdmin"] != false {
+		t.Fatal("signup re-opened admin bootstrap after the last admin was removed")
+	}
+	successor.request("GET", "/api/admin/users", nil, 403)
+}
+
 func TestDirectLoginRejectsBrowserForgery(t *testing.T) {
 	srv := testServer(t)
 	for _, tc := range []struct {

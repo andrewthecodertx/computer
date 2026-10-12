@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -128,4 +131,75 @@ func TestRateLimitMiddleware(t *testing.T) {
 	if w.Code != 204 {
 		t.Fatalf("signup exhaustion must not limit login: %d", w.Code)
 	}
+}
+
+// Review AUTH-RATE: Go accepts a forwarded client IP only when the trusted
+// Next proxy signed it with the shared secret; forged headers fall back to
+// the direct peer, so one browser cannot evade or poison another's bucket.
+func TestSignedForwardedClientIP(t *testing.T) {
+	t.Setenv("NEXTAUTH_SECRET", "")
+	t.Setenv("AUTH_SECRET", "ratelimit-forward-secret")
+	sign := func(ip string) string {
+		mac := hmac.New(sha256.New, []byte("ratelimit-forward-secret"))
+		mac.Write([]byte(ip))
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	r := httptest.NewRequest("POST", "/api/auth/login", nil)
+	r.RemoteAddr = "203.0.113.9:5555"
+	if got := EffectiveClientIP(r); got != "203.0.113.9" {
+		t.Fatalf("unsigned request: got %s", got)
+	}
+	r.Header.Set(headerClientIP, "198.51.100.7")
+	r.Header.Set(headerClientSig, sign("198.51.100.7"))
+	if got := EffectiveClientIP(r); got != "198.51.100.7" {
+		t.Fatalf("signed forwarded IP ignored: got %s", got)
+	}
+	r.Header.Set(headerClientSig, sign("198.51.100.8"))
+	if got := EffectiveClientIP(r); got != "203.0.113.9" {
+		t.Fatalf("forged signature accepted: got %s", got)
+	}
+	r.Header.Set(headerClientSig, sign("198.51.100.7"))
+	r.Header.Set(headerClientIP, "198.51.100.7; DROP TABLE users")
+	if got := EffectiveClientIP(r); got != "203.0.113.9" {
+		t.Fatalf("non-IP forwarded value accepted: got %s", got)
+	}
+	r.Header.Set(headerClientIP, "127.0.0.1")
+	r.Header.Set(headerClientSig, sign("127.0.0.1"))
+	if !isLoopback(r) {
+		t.Fatal("signed loopback forwarded IP not treated as loopback")
+	}
+}
+
+func TestForwardedIPsGetSeparateBuckets(t *testing.T) {
+	t.Setenv("NEXTAUTH_SECRET", "")
+	t.Setenv("AUTH_SECRET", "ratelimit-forward-secret")
+	resetRateLimits()
+	sign := func(ip string) string {
+		mac := hmac.New(sha256.New, []byte("ratelimit-forward-secret"))
+		mac.Write([]byte(ip))
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	handler := RateLimitLogin(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	do := func(ip string) int {
+		r := httptest.NewRequest("POST", "/api/auth/login", nil)
+		r.RemoteAddr = "10.0.0.5:1234" // shared proxy peer
+		r.Header.Set(headerClientIP, ip)
+		r.Header.Set(headerClientSig, sign(ip))
+		w := httptest.NewRecorder()
+		handler(w, r)
+		return w.Code
+	}
+	for i := 0; i < loginIPLimit; i++ {
+		if code := do("198.51.100.1"); code != 200 {
+			t.Fatalf("browser 1 request %d: %d", i+1, code)
+		}
+	}
+	if code := do("198.51.100.1"); code != http.StatusTooManyRequests {
+		t.Fatalf("browser 1 over limit: %d", code)
+	}
+	// An unrelated browser behind the same proxy keeps its own budget.
+	if code := do("198.51.100.2"); code != 200 {
+		t.Fatalf("browser 2 blocked by browser 1: %d", code)
+	}
+	resetRateLimits()
 }
