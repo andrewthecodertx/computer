@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 # Server-side half of the deployment, run as root on eidcweb3 by
-# scripts/deploy.sh:  ssh -t HOST sudo bash .../server-deploy.sh DIR DOMAIN EMAIL USER
+# scripts/deploy.sh:  ssh -t HOST sudo bash .../server-deploy.sh DIR DOMAIN EMAIL USER [REVISION]
 #
 # Provisions missing packages (docker, compose plugin, nginx, certbot),
 # writes .env on first deploy, builds/starts the Compose stack, waits for
 # health, and installs the nginx reverse proxy with a Let's Encrypt cert.
 set -euo pipefail
 
-REMOTE_DIR="${1:?usage: server-deploy.sh DIR DOMAIN EMAIL RUN_USER}"
+REMOTE_DIR="${1:?usage: server-deploy.sh DIR DOMAIN EMAIL RUN_USER [REVISION]}"
 DOMAIN="$2"
 EMAIL="$3"
 RUN_USER="$4"
+REVISION="${5:-}"
 # Host-side ports for the Compose bindings. The defaults from docker-compose.yml
 # (8080/3000) collide with other apps on shared servers, so production pins
 # these via .env; override here if 18080/13000 are ever taken too.
 APP_HOST_PORT="${APP_HOST_PORT:-18080}"
 WEB_HOST_PORT="${WEB_HOST_PORT:-13000}"
+# Pinned upstream tool versions (review OPS-02): fallback downloads install
+# exactly these releases and verify them against the checksums Docker
+# publishes with the release. Overrides must be deliberate.
+COMPOSE_VERSION="${COMPOSE_VERSION:-v5.6.0}"
+BUILDX_VERSION="${BUILDX_VERSION:-v0.38.0}"
 
 log() { printf '\033[1;34m[server]==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[server] error:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -44,17 +50,21 @@ if ! command -v certbot >/dev/null 2>&1; then
   install_pkg python3-certbot-nginx || die "python3-certbot-nginx unavailable via apt"
 fi
 if ! docker compose version >/dev/null 2>&1; then
-  log "Compose plugin not in apt; installing upstream binary"
+  log "Compose plugin not in apt; installing pinned upstream $COMPOSE_VERSION (checksum-verified)"
   # GitHub release assets use uname -m names (x86_64/aarch64), not dpkg arches.
   arch="$(uname -m)"
   case "$arch" in
     x86_64 | aarch64 | armv7l | s390x | ppc64le) ;;
     *) die "no upstream Compose binary for architecture '$arch'" ;;
   esac
+  asset="docker-compose-linux-$arch"
+  tmp="$(mktemp -d)"
+  curl -fsSL "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/$asset" -o "$tmp/$asset"
+  curl -fsSL "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/$asset.sha256" -o "$tmp/$asset.sha256"
+  (cd "$tmp" && sha256sum -c "$asset.sha256") || die "Compose $COMPOSE_VERSION checksum verification failed; refusing to install"
   mkdir -p /usr/local/libexec/docker/cli-plugins
-  curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" \
-    -o /usr/local/libexec/docker/cli-plugins/docker-compose
-  chmod +x /usr/local/libexec/docker/cli-plugins/docker-compose
+  install -m 755 "$tmp/$asset" /usr/local/libexec/docker/cli-plugins/docker-compose
+  rm -rf "$tmp"
   docker compose version >/dev/null 2>&1 || die "docker compose still unavailable"
 fi
 
@@ -68,22 +78,31 @@ buildx_ok() {
   [ "$(printf '%s\n0.17.0\n' "$v" | sort -V | head -n1)" = "0.17.0" ]
 }
 if ! buildx_ok; then
-  log "Installing upstream buildx plugin (compose build needs >= 0.17.0)"
+  log "Installing pinned upstream buildx $BUILDX_VERSION (compose build needs >= 0.17.0; checksum-verified)"
   case "$(uname -m)" in
     x86_64) barch=amd64 ;;
     aarch64) barch=arm64 ;;
-    armv7l) barch=armv7 ;;
+    armv7l) barch=arm ;;
     *) die "no upstream buildx binary for architecture '$(uname -m)'" ;;
   esac
-  tag_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' https://github.com/docker/buildx/releases/latest)"
-  bver="${tag_url##*/tag/v}"
-  [ -n "$bver" ] && [ "$bver" != "$tag_url" ] || die "could not determine latest buildx version"
+  asset="buildx-$BUILDX_VERSION.linux-$barch"
+  tmp="$(mktemp -d)"
+  curl -fsSL "https://github.com/docker/buildx/releases/download/$BUILDX_VERSION/$asset" -o "$tmp/$asset"
+  curl -fsSL "https://github.com/docker/buildx/releases/download/$BUILDX_VERSION/checksums.txt" -o "$tmp/checksums.txt"
+  # checksums.txt covers every asset; verify exactly the pinned one (exact
+  # field match — a substring grep would also catch .provenance/.sbom assets
+  # and fail the check).
+  awk -v name="*$asset" '$2 == name' "$tmp/checksums.txt" > "$tmp/$asset.sha256"
+  [ -s "$tmp/$asset.sha256" ] || die "no published checksum for $asset"
+  (cd "$tmp" && sha256sum -c "$asset.sha256") || die "buildx $BUILDX_VERSION checksum verification failed; refusing to install"
   mkdir -p /usr/local/libexec/docker/cli-plugins
-  curl -fsSL "https://github.com/docker/buildx/releases/download/v$bver/buildx-v$bver.linux-$barch" \
-    -o /usr/local/libexec/docker/cli-plugins/docker-buildx
-  chmod +x /usr/local/libexec/docker/cli-plugins/docker-buildx
+  install -m 755 "$tmp/$asset" /usr/local/libexec/docker/cli-plugins/docker-buildx
+  rm -rf "$tmp"
   buildx_ok || die "docker buildx still unavailable or too old"
 fi
+# Record what provisioning settled on (review OPS-02).
+log "compose plugin: $(docker compose version 2>/dev/null | head -n1)"
+log "buildx plugin: $(docker buildx version 2>/dev/null | head -n1)"
 systemctl enable --now docker nginx
 # Let RUN_USER drive docker without sudo for day-to-day commands.
 id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx docker || usermod -aG docker "$RUN_USER"
@@ -143,25 +162,63 @@ fi
 
 # --- 2b. Back up the database before touching the stack -------------------------
 # The volume survives rebuilds, but a volume is not a backup: take a pg_dump
-# before every deploy and keep the 15 most recent.
-BACKUP_DIR=/var/backups/computer
-if docker compose ps --status running -q db 2>/dev/null | grep -q .; then
+# before every deploy and keep the 15 most recent dumps plus matching .env
+# secret snapshots (review OPS-03: AUTH_SECRET/ENCRYPTION_KEY are required to
+# decrypt integration data when restoring). Skipping is never silent: an
+# existing database that is not running gets started for the backup, and a
+# failed dump aborts the deploy. Dumps are 0600 in a 0700 directory; copy
+# them off-host — a same-disk backup does not survive disk loss.
+BACKUP_DIR="${BACKUP_DIR:-/var/backups/computer}"
+pg_volume="$(sed -n 's/^POSTGRES_VOLUME=//p' .env 2>/dev/null | tail -n1)"; pg_volume="${pg_volume:-computer_pgdata}"
+have_existing_db() {
+  [ -n "$(docker compose ps -aq db 2>/dev/null)" ] || docker volume inspect "$pg_volume" >/dev/null 2>&1
+}
+if have_existing_db; then
+  if ! docker compose ps --status running -q db 2>/dev/null | grep -q .; then
+    log "Database exists but is not running; starting it so the pre-deploy backup actually happens"
+    docker compose up -d db
+    db_deadline=$((SECONDS + 90))
+    until [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q db)" 2>/dev/null)" = "healthy" ]; do
+      [ $SECONDS -lt $db_deadline ] || die "database never became healthy for the pre-deploy backup"
+      sleep 3
+    done
+  fi
   log "Backing up database to $BACKUP_DIR"
   mkdir -p "$BACKUP_DIR"
-  dump="$BACKUP_DIR/computer-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
+  chmod 700 "$BACKUP_DIR"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  dump="$BACKUP_DIR/computer-$stamp.sql.gz"
   if docker compose exec -T db pg_dump -U computer -d computer | gzip > "$dump"; then
+    chmod 600 "$dump"
+    # Capture the secrets required to decrypt/restore integration data.
+    cp -p .env "$BACKUP_DIR/env-$stamp.bak"
+    chmod 600 "$BACKUP_DIR/env-$stamp.bak"
     ls -1t "$BACKUP_DIR"/computer-*.sql.gz 2>/dev/null | tail -n +16 | xargs -r rm -f
-    log "Backup written: $dump ($(du -h "$dump" | cut -f1))"
+    ls -1t "$BACKUP_DIR"/env-*.bak 2>/dev/null | tail -n +16 | xargs -r rm -f
+    log "Backup written: $dump ($(du -h "$dump" | cut -f1)) + env-$stamp.bak; copy both off-host"
   else
     rm -f "$dump"
     die "pg_dump failed - aborting deploy to protect the database"
   fi
+else
+  log "No existing database container or volume ($pg_volume) found - first deploy, nothing to back up"
 fi
 
 # --- 3. Build and start the stack ---------------------------------------------
 log "docker compose up -d --build (first build takes several minutes)"
 docker compose up -d --build
 docker compose ps -a
+# Retain a named artifact of this release for rollback (review OPS-04):
+# tag the built images with the deployed revision when deploy.sh passed one.
+if [ -n "$REVISION" ]; then
+  for svc in app web; do
+    img="$(docker compose images -q "$svc" 2>/dev/null | head -n1)"
+    if [ -n "$img" ]; then
+      docker tag "$img" "computer-$svc:$REVISION"
+      log "tagged computer-$svc:$REVISION"
+    fi
+  done
+fi
 
 # --- 4. Wait for health ---------------------------------------------------------
 log "Waiting for app health and web /login"
