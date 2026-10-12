@@ -17,21 +17,23 @@ import (
 
 func bookmark(r *http.Request, id string, public bool) (object, error) {
 	if public {
-		// Code review SEC-05 flagged the owner name on public links. The
-		// "Shared by" attribution is a deliberate product decision — the share
-		// page (web/app/share/bookmark/[id]) renders it — kept alongside the
-		// documented notes/dueDate disclosure; don't strip it silently.
+		// Review PRIV-04: the public projection is an explicit allowlist and
+		// carries NO owner attribution — the README promises owner identity
+		// stays private, and API, share page, and docs must agree. Notes and
+		// dueDate ARE published by product decision; the share panel states
+		// exactly what a public link exposes before the owner toggles it.
 		return db.One(r.Context(), database(r), `SELECT jsonb_build_object(
 		 'id',b.id,'url',b.url,'title',b.title,'description',b.description,'notes',b.notes,
 		 'favicon',b.favicon,'ogImage',b."ogImage",'ogTitle',b."ogTitle",'ogDescription',b."ogDescription",
 		 'dueDate',b."dueDate",'isPublic',b."isPublic",
-		 'owner',(SELECT jsonb_build_object('name',u.name) FROM "User" u WHERE u.id=b."ownerId"),
 		 'tags',COALESCE((SELECT jsonb_agg(jsonb_build_object('tag',jsonb_build_object('id',t.id,'name',t.name,'color',t.color))) FROM "BookmarkTag" bt JOIN "Tag" t ON t.id=bt."tagId" WHERE bt."bookmarkId"=b.id),'[]'::jsonb))
 		 FROM "Bookmark" b WHERE b.id=$1 AND b."isPublic"`, id)
 	}
+	// Review PRIV-02: shared readers get the narrowed allowlist projection;
+	// only the owner receives the full row with contact and recipient list.
 	where := `b.id=$1 AND ` + db.BookmarkVisible
 	uid := user(r)
-	return db.One(r.Context(), database(r), `SELECT `+db.BookmarkView+` || jsonb_build_object('pageLinks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('page',jsonb_build_object('id',p.id,'title',p.title))) FROM "PageBookmark" pb JOIN "Page" p ON p.id=pb."pageId" WHERE pb."bookmarkId"=b.id AND p."ownerId"=$2),'[]'::jsonb)) FROM "Bookmark" b WHERE `+where, id, uid)
+	return db.One(r.Context(), database(r), `SELECT `+db.BookmarkViewerView+` || jsonb_build_object('pageLinks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('page',jsonb_build_object('id',p.id,'title',p.title))) FROM "PageBookmark" pb JOIN "Page" p ON p.id=pb."pageId" WHERE pb."bookmarkId"=b.id AND p."ownerId"=$2),'[]'::jsonb)) FROM "Bookmark" b WHERE `+where, id, uid)
 }
 func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 	args := []any{nil, user(r)}
@@ -100,7 +102,7 @@ func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 		where += fmt.Sprintf(` AND (b."updatedAt",b.id)<($%d,$%d)`, len(args)-1, len(args))
 	}
 	args = append(args, limit+1)
-	v, e := db.Many(r.Context(), database(r), `SELECT `+db.BookmarkView+` FROM "Bookmark" b WHERE `+where+fmt.Sprintf(` ORDER BY b."updatedAt" DESC,b.id DESC LIMIT $%d`, len(args)), args...)
+	v, e := db.Many(r.Context(), database(r), `SELECT `+db.BookmarkViewerView+` FROM "Bookmark" b WHERE `+where+fmt.Sprintf(` ORDER BY b."updatedAt" DESC,b.id DESC LIMIT $%d`, len(args)), args...)
 	if e == nil && len(v) > limit {
 		v = v[:limit]
 		last := v[len(v)-1]
@@ -336,10 +338,9 @@ func HandleBookmarksShare(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, OK{true}, e)
 }
 func HandleBookmarksMarkdown(w http.ResponseWriter, r *http.Request) {
+	// bookmark() already applies the permission-specific projection (review
+	// PRIV-02), so shared readers export only fields they may read.
 	v, e := bookmark(r, r.PathValue("id"), false)
-	if e == nil && str(v, "ownerId") != user(r) {
-		_, e = db.One(r.Context(), database(r), `SELECT to_jsonb(b) FROM "Bookmark" b WHERE b.id=$1 AND `+db.BookmarkVisible, r.PathValue("id"), user(r))
-	}
 	if e != nil {
 		respond(w, 0, nil, e)
 		return

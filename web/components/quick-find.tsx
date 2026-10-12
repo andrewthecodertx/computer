@@ -206,7 +206,7 @@ export function QuickFind({ open, onOpenChange, isAdmin = false, onAddBookmark }
                 <CommandItem key={b.id} value={`bookmark ${b.title ?? ''} ${b.ogTitle ?? ''} ${b.url}`} onSelect={() => go(`/bookmarks?open=${b.id}`)}>
                   {b.favicon ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={b.favicon} alt="" className="mr-2 h-4 w-4 rounded" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden' }} />
+                    <img src={b.favicon} alt="" referrerPolicy="no-referrer" className="mr-2 h-4 w-4 rounded" onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden' }} />
                   ) : (
                     <Link2 className="mr-2 h-4 w-4 text-muted-foreground" />
                   )}

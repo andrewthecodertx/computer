@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"github.com/andrew/go-computer/internal/scripts"
 	"net/http"
 	"net/http/cookiejar"
@@ -72,17 +73,58 @@ func TestPublicBookmarksDoNotExposePrivateMetadata(t *testing.T) {
 	}
 	id := owner.request("POST", "/api/bookmarks", map[string]any{"url": "https://127.0.0.1/test", "isPublic": true, "contactId": "contact", "imapQuery": "private mailbox query", "alertAt": "2026-10-07"}, 201)["id"].(string)
 	v := viewer.request("GET", "/api/public/bookmarks/"+id, nil, 200)
-	for _, key := range []string{"contact", "contactId", "sharedWith", "ownerId", "imapQuery", "imapWatchEnabled", "alertAt", "kanbanColumnId", "pageLinks"} {
+	// Review PRIV-04: public links carry no owner attribution at all; the
+	// README promises owner identity stays private.
+	for _, key := range []string{"contact", "contactId", "sharedWith", "owner", "ownerId", "imapQuery", "imapWatchEnabled", "alertAt", "alertSent", "kanbanColumnId", "pageLinks"} {
 		if _, exists := v[key]; exists {
 			t.Errorf("public response includes %s", key)
 		}
 	}
-	if _, exists := v["owner"].(map[string]any)["email"]; exists {
-		t.Fatal("owner email exposed")
-	}
 	viewer.request("GET", "/api/bookmarks/"+id, nil, 404)
 	owner.request("POST", "/api/bookmarks/"+id+"/share", map[string]any{"userIds": []string{vid}}, 200)
-	viewer.request("GET", "/api/bookmarks/"+id, nil, 200)
+	// Review PRIV-02: an authenticated shared reader gets the narrowed
+	// projection — no contact record, no recipient list, no owner operational
+	// metadata — while the owner keeps the full view.
+	shared := viewer.request("GET", "/api/bookmarks/"+id, nil, 200)
+	for _, key := range []string{"contact", "contactId", "sharedWith", "imapQuery", "imapWatchEnabled", "alertAt", "alertSent", "kanbanColumnId"} {
+		if _, exists := shared[key]; exists {
+			t.Errorf("shared-reader response includes %s", key)
+		}
+	}
+	if shared["url"] != "https://127.0.0.1/test" || shared["ownerId"] != uid {
+		t.Error("shared-reader response lost basic bookmark fields")
+	}
+	if _, exists := shared["tags"]; !exists {
+		t.Error("shared-reader response lost tags")
+	}
+	full := owner.request("GET", "/api/bookmarks/"+id, nil, 200)
+	if c, _ := full["contact"].(map[string]any); c == nil || c["email"] != "private@computer.test" {
+		t.Error("owner projection lost the contact record")
+	}
+	if s, ok := full["sharedWith"].([]any); !ok || len(s) != 1 {
+		t.Error("owner projection lost the recipient list")
+	}
+	if _, exists := full["imapQuery"]; !exists {
+		t.Error("owner projection lost mailbox-watch settings")
+	}
+	// The list endpoint must apply the same permission-specific projections.
+	res, err := viewer.c.Get(srv.URL + "/api/bookmarks?shared=true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var list []map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0]["id"] != id {
+		t.Fatalf("shared list returned %d entries", len(list))
+	}
+	for _, key := range []string{"contact", "sharedWith", "imapQuery", "alertAt"} {
+		if _, exists := list[0][key]; exists {
+			t.Errorf("shared list response includes %s", key)
+		}
+	}
 	owner.request("PUT", "/api/bookmarks/"+id, map[string]any{"isPublic": false}, 200)
 	viewer.request("GET", "/api/public/bookmarks/"+id, nil, 404)
 }

@@ -34,15 +34,20 @@ remain authoritative.
 
 ## Bookmarks
 
-A bookmark includes camelCase scalar fields plus `tags:[{tag}]`, `contact`,
-`sharedWith:[{userId,user}]`, `owner`. Detail responses also include
-`pageLinks:[{pageId,page}]`, limited to the effective user's pages.
+Bookmark responses are permission-specific. Owners receive camelCase scalar
+fields plus `tags:[{tag}]`, `contact`, `sharedWith:[{userId,user}]` and
+`owner` (with email). Authenticated shared readers receive a narrowed
+allowlist — URL, title/description, notes, preview metadata, `dueDate`,
+`isPublic`, `kanbanStatus`, timestamps, `tags` and `owner:{id,name}` — never
+the owner's contact record, the recipient list, alerts, mailbox watches or
+board placement. Detail responses also include `pageLinks:[{pageId,page}]`,
+limited to the effective user's pages.
 
 | Method | Path | Returns / behavior |
 |---|---|---|
 | GET | `/api/bookmarks` | Array, newest-updated then ID descending; query `search,tagId,contactId,kanban,date,shared,limit,cursor`; default/max page size 200 |
 | POST | `/api/bookmarks` | 201 bookmark; body `{url,title?,description?,notes?,dueDate?,alertAt?,kanbanStatus?,contactId?,tagIds?,isPublic?,imapWatchEnabled?,imapQuery?}` |
-| GET | `/api/bookmarks/{id}` | Full bookmark if owned or shared; public-only access uses the redacted public endpoint |
+| GET | `/api/bookmarks/{id}` | Owner-full or shared-reader projection if visible; public-only access uses the redacted public endpoint |
 | PUT | `/api/bookmarks/{id}` | Updated bookmark, owner only; fields above plus `kanbanColumnId`; omitted fields stay unchanged; nullable fields can be cleared |
 | DELETE | `/api/bookmarks/{id}` | `{ok:true}`, owner only |
 | POST | `/api/bookmarks/{id}/share` | `{ok:true}`; body `{userIds?,isPublic?}`; adds shares |
@@ -55,9 +60,9 @@ Public HTML pages remain at `/share/bookmark/{id}` on the Next.js server.
 For pagination, read the `X-Next-Cursor` response header and pass that opaque
 value as `cursor` with the same filters. An absent header marks the final page.
 `limit` must be between 1 and 200. The web proxy forwards the cursor header.
-Public responses allowlist URL/preview/notes/date/tag fields and owner name;
-contacts, share recipients, owner email, mailbox queries, and alert metadata
-are excluded.
+Public responses allowlist URL/preview/notes/date/tag fields only; owner
+identity, contacts, share recipients, mailbox queries, and alert metadata are
+excluded.
 Updating `alertAt` resets `alertSent`; replacing `tagIds` is transactional.
 Tags, columns and contacts are checked for accessibility/ownership.
 

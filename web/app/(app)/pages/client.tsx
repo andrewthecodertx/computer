@@ -554,13 +554,13 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
                 <div key={b.id} className="group relative flex gap-3 rounded-lg bg-card p-3 shadow-sm ring-1 ring-border/50 transition-shadow hover:shadow-md">
                   {b.ogImage ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={b.ogImage} alt={`Preview of ${b.title || host(b.url)}`} className="h-16 w-24 shrink-0 rounded object-cover bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                    <img src={b.ogImage} alt={`Preview of ${b.title || host(b.url)}`} referrerPolicy="no-referrer" className="h-16 w-24 shrink-0 rounded object-cover bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                   ) : null}
                   <a href={b.url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       {b.favicon && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={b.favicon} alt="" className="h-3.5 w-3.5" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                        <img src={b.favicon} alt="" referrerPolicy="no-referrer" className="h-3.5 w-3.5" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                       )}
                       <span className="truncate text-sm font-medium">{b.title || b.ogTitle || b.url}</span>
                     </div>

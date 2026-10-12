@@ -70,6 +70,15 @@ try {
   publicPage.on('pageerror', error => errors.push(error.message))
   await publicPage.goto(`${base}/share/bookmark/${bookmark.id}`)
   await publicPage.getByText('Browser QA bookmark', { exact: true }).first().waitFor()
+  // Privacy field assertions (review PRIV-04): the public API response is an
+  // allowlist — no owner attribution, no contact/recipient/operational data.
+  const publicBody = await json(await publicContext.request.get(`${base}/api/public/bookmarks/${bookmark.id}`))
+  assert.equal(publicBody.title, 'Browser QA bookmark')
+  assert.equal('# Browser verified', publicBody.notes, 'public link must publish notes (documented behavior)')
+  for (const key of ['owner', 'ownerId', 'contact', 'contactId', 'sharedWith', 'imapQuery', 'imapWatchEnabled', 'alertAt', 'alertSent', 'kanbanColumnId', 'kanbanStatus', 'pageLinks']) {
+    assert.equal(key in publicBody, false, `public response must not include ${key}`)
+  }
+  console.log('PASS: public response matches the documented privacy policy (no owner attribution)')
   await publicContext.close()
   await page.goto(`${base}/kanban`)
   await page.getByRole('heading', { name: 'Kanban Board' }).waitFor()

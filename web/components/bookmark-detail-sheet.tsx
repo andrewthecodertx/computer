@@ -42,7 +42,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
   const [url, setUrl] = useState('')
   const [description, setDescription] = useState('')
   const [tagIds, setTagIds] = useState<string[]>([])
-  const [allTags, setAllTags] = useState<{ id: string; name: string; color: string }[]>([])
+  const [allTags, setAllTags] = useState<{ id: string; name: string; color: string; ownerId?: string }[]>([])
   const canEdit = !!bookmark && effectiveId === bookmark.ownerId
   useEffect(() => {
     if (!bookmark) return
@@ -54,7 +54,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
         fetchReference<{ effectiveUser?: { id: string } }>('me'),
         fetchReference<any[]>('columns'),
         fetchReference<any[]>('contacts'),
-        fetchReference<{ id: string; name: string; color: string }[]>('tags'),
+        fetchReference<{ id: string; name: string; color: string; ownerId?: string }[]>('tags'),
       ])
       if (cancelled) return
       if (me?.effectiveUser?.id) setEffectiveId(me.effectiveUser.id)
@@ -174,7 +174,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             {bookmark?.favicon && (
-              <img src={bookmark.favicon} alt="" className="h-5 w-5 rounded" onError={(e: any) => { e.target.style.display = 'none' }} />
+              <img src={bookmark.favicon} alt="" referrerPolicy="no-referrer" className="h-5 w-5 rounded" onError={(e: any) => { e.target.style.display = 'none' }} />
             )}
             <span className="truncate">{bookmark?.title ?? 'Untitled'}</span>
           </SheetTitle>
@@ -200,7 +200,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
           {/* OG Preview */}
           {bookmark?.ogImage && (
             <div className="rounded-lg border overflow-hidden">
-              <img src={bookmark.ogImage} alt="" className="w-full aspect-video object-cover" onError={(e: any) => { e.target.style.display = 'none' }} />
+              <img src={bookmark.ogImage} alt="" referrerPolicy="no-referrer" className="w-full aspect-video object-cover" onError={(e: any) => { e.target.style.display = 'none' }} />
               <div className="p-3">
                 <p className="text-sm font-medium">{bookmark?.ogTitle ?? bookmark?.title}</p>
                 <p className="text-xs text-muted-foreground mt-1">{bookmark?.ogDescription}</p>
@@ -223,6 +223,11 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
             {canEdit && bookmark && <div className="mt-2 space-y-1">
               {[...new Map([...allTags, ...bookmark.tags.map(({ tag }) => tag)].map(tag => [tag.id, tag])).values()].map(tag => <label key={tag.id} className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={tagIds.includes(tag.id)} onChange={e => setTagIds(previous => e.target.checked ? [...previous, tag.id] : previous.filter(id => id !== tag.id))} />{tag.name}
+                {/* Group-wide tag sharing is a product decision; make the audience
+                    visible before a tag is attached to private material (review). */}
+                {tag.ownerId && effectiveId && tag.ownerId !== effectiveId && (
+                  <span className="text-xs text-muted-foreground">(shared tag — everyone with this tag can see bookmarks under it)</span>
+                )}
               </label>)}
             </div>}
           </div>
@@ -322,7 +327,7 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
                   <p>
                     Public link: <code className="bg-muted px-1 rounded">/share/bookmark/{bookmark?.id}</code>
                   </p>
-                  <p>Anyone with the link sees the title, description, <span className="font-medium text-foreground">notes</span>, due date, tags and preview. Contacts, alerts and mailbox watches stay private.</p>
+                  <p>Anyone with the link sees the title, description, <span className="font-medium text-foreground">notes</span>, due date, tags and preview. Contacts, alerts, mailbox watches and your identity stay private.</p>
                 </div>
               )}
               <Input placeholder="Search users to share with..." value={shareSearch} onChange={(e: React.ChangeEvent<HTMLInputElement>) => searchUsers(e.target.value)} />

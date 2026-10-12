@@ -25,6 +25,7 @@ export function LinkPreviewCard({ url, label }: { url: string; label?: string })
         <img
           src={preview.ogImage}
           alt=""
+          referrerPolicy="no-referrer"
           className="h-16 w-24 shrink-0 rounded bg-muted object-cover"
           onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
@@ -36,6 +37,7 @@ export function LinkPreviewCard({ url, label }: { url: string; label?: string })
             <img
               src={preview.favicon}
               alt=""
+              referrerPolicy="no-referrer"
               className="h-3.5 w-3.5 shrink-0"
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
             />

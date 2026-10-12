@@ -2,7 +2,7 @@
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ExternalLink, Link2, Calendar, User } from 'lucide-react'
+import { ExternalLink, Link2, Calendar } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -39,7 +39,7 @@ export function PublicBookmarkView({ bookmark }: { bookmark: any }) {
 
         {bookmark?.ogImage && (
           <div className="rounded-lg border overflow-hidden">
-            <img src={bookmark.ogImage} alt={bookmark?.title ?? ''} className="w-full aspect-video object-cover" />
+            <img src={bookmark.ogImage} alt={bookmark?.title ?? ''} referrerPolicy="no-referrer" className="w-full aspect-video object-cover" />
           </div>
         )}
 
@@ -58,9 +58,6 @@ export function PublicBookmarkView({ bookmark }: { bookmark: any }) {
         )}
 
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          {bookmark?.owner?.name && (
-            <span className="flex items-center gap-1"><User className="h-4 w-4" /> Shared by {bookmark.owner.name}</span>
-          )}
           {bookmark?.dueDate && (
             <span className="flex items-center gap-1"><Calendar className="h-4 w-4" /> {new Date(bookmark.dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>
           )}

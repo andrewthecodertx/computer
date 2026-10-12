@@ -10,7 +10,9 @@ import (
 )
 
 func page(r *http.Request, id string) (object, error) {
-	return db.One(r.Context(), database(r), `SELECT to_jsonb(p)||jsonb_build_object('bookmarks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('bookmark',`+db.BookmarkView+`) ORDER BY pb.position) FROM "PageBookmark" pb JOIN "Bookmark" b ON b.id=pb."bookmarkId" WHERE pb."pageId"=p.id AND `+db.BookmarkVisible+`),'[]'::jsonb)) FROM "Page" p WHERE p.id=$1 AND p."ownerId"=$2`, id, user(r))
+	// Linked bookmarks use the viewer projection (review PRIV-02): a page can
+	// link bookmarks shared with its owner, and those arrive narrowed.
+	return db.One(r.Context(), database(r), `SELECT to_jsonb(p)||jsonb_build_object('bookmarks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('bookmark',`+db.BookmarkViewerView+`) ORDER BY pb.position) FROM "PageBookmark" pb JOIN "Bookmark" b ON b.id=pb."bookmarkId" WHERE pb."pageId"=p.id AND `+db.BookmarkVisible+`),'[]'::jsonb)) FROM "Page" p WHERE p.id=$1 AND p."ownerId"=$2`, id, user(r))
 }
 func HandlePagesList(w http.ResponseWriter, r *http.Request) {
 	// Review PERF-01: the list is a metadata projection — content bodies stay

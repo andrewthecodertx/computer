@@ -28,6 +28,7 @@ export function BookmarkCard({ bookmark, onClick, compact }: BookmarkCardProps) 
           <img
             src={bookmark.ogImage}
             alt={bookmark?.title ?? 'Bookmark'}
+            referrerPolicy="no-referrer"
             className="object-cover w-full h-full"
             onError={(e: any) => { e.target.style.display = 'none' }}
           />
@@ -39,6 +40,7 @@ export function BookmarkCard({ bookmark, onClick, compact }: BookmarkCardProps) 
             <img
               src={bookmark.favicon}
               alt=""
+              referrerPolicy="no-referrer"
               className="h-4 w-4 mt-0.5 rounded shrink-0"
               onError={(e: any) => { e.target.style.display = 'none' }}
             />

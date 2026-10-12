@@ -49,10 +49,14 @@ const api = http.createServer(async (req, res) => {
       }
       result = pages.get(id)
     } else if (url.pathname === '/api/bookmarks') {
-      const matching = url.searchParams.get('shared') === 'true' ? [] : bookmarks.filter(b => b.title.includes(url.searchParams.get('search') || ''))
+      const shared = url.searchParams.get('shared') === 'true'
+      const matching = shared ? [] : bookmarks.filter(b => b.title.includes(url.searchParams.get('search') || ''))
       const offset = Number(url.searchParams.get('cursor') || 0)
       const limit = Number(url.searchParams.get('limit') || 200)
-      result = matching.slice(offset, offset + limit)
+      // Mirror the Go permission-specific projections (PRIV-02): shared
+      // readers get the narrowed allowlist shape, owners the full row.
+      const project = b => shared ? (({ contact, contactId, sharedWith, alertAt, alertSent, imapQuery, imapWatchEnabled, kanbanColumnId, ...rest }) => rest)(b) : b
+      result = matching.slice(offset, offset + limit).map(project)
       if (offset + limit < matching.length) res.setHeader('X-Next-Cursor', String(offset + limit))
       if (offset) paginatedRequests++
     } else if (url.pathname === '/api/tags') result = tags

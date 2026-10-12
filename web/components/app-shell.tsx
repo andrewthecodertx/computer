@@ -19,18 +19,20 @@ export type Bookmark = {
   ogDescription: string | null
   notes: string | null
   dueDate: string | null
-  alertAt: string | null
-  alertSent: boolean
+  // Owner-only fields (review PRIV-02): shared readers receive a narrowed
+  // projection without contacts, recipients, alerts or mailbox watches.
+  alertAt?: string | null
+  alertSent?: boolean
   kanbanStatus: string
   kanbanColumnId?: string | null
-  imapWatchEnabled: boolean
-  imapQuery: string | null
+  imapWatchEnabled?: boolean
+  imapQuery?: string | null
   isPublic: boolean
   ownerId: string
-  contactId: string | null
-  contact: any | null
-  tags: { tag: { id: string; name: string; color: string } }[]
-  sharedWith: any[]
+  contactId?: string | null
+  contact?: any | null
+  tags: { tag: { id: string; name: string; color: string; ownerId?: string } }[]
+  sharedWith?: any[]
   owner?: any
   createdAt: string
   updatedAt: string

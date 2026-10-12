@@ -184,7 +184,7 @@ export function KanbanClient() {
                       <GripVertical className="h-4 w-4 text-muted-foreground/50 mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          {b.favicon && <img src={b.favicon} alt="" className="h-3.5 w-3.5 rounded" onError={(e: any) => { e.target.style.display = 'none' }} />}
+                          {b.favicon && <img src={b.favicon} alt="" referrerPolicy="no-referrer" className="h-3.5 w-3.5 rounded" onError={(e: any) => { e.target.style.display = 'none' }} />}
                           <p className="text-sm font-medium truncate">{b.title ?? 'Untitled'}</p>
                         </div>
                         <div className="flex flex-wrap gap-1 mt-1.5">

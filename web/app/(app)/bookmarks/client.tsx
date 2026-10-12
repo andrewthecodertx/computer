@@ -141,7 +141,7 @@ export function BookmarksClient({ initialSearch = null, initialOpen = null }: { 
                 <tr key={b.id} tabIndex={0} className="hover:bg-muted/30 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary" onClick={() => setSelected(b)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(b) } }}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
-                      {b.favicon && <img src={b.favicon} alt="" className="h-4 w-4 rounded" onError={(e: any) => { e.target.style.display = 'none' }} />}
+                      {b.favicon && <img src={b.favicon} alt="" referrerPolicy="no-referrer" className="h-4 w-4 rounded" onError={(e: any) => { e.target.style.display = 'none' }} />}
                       <span className="truncate max-w-[200px]">{b.title ?? 'Untitled'}</span>
                     </div>
                   </td>
