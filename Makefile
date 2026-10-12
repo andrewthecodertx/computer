@@ -1,4 +1,4 @@
-.PHONY: run docker stop docker-down db-up db-shell build vet test integration e2e logs migrate seed deploy
+.PHONY: run docker stop docker-down db-up db-shell build vet test integration check e2e logs migrate seed deploy
 run docker:
 	docker compose up -d --build
 stop docker-down:
@@ -19,6 +19,23 @@ test:
 	go test -race ./internal/...
 integration:
 	docker compose run --rm tests
+# Web toolchain command; override when yarn comes through corepack:
+#   make check YARN="corepack yarn"
+YARN ?= yarn
+# Release validation (review TEST-02): the database-backed suite is
+# mandatory here — unlike `make test`, this target fails when Docker (and
+# therefore the PostgreSQL integration coverage) is unavailable instead of
+# quietly accepting skipped tests.
+check:
+	@docker compose ps >/dev/null 2>&1 || { echo "error: release checks require docker; database-backed coverage is mandatory" >&2; exit 1; }
+	$(MAKE) build
+	$(MAKE) vet
+	$(MAKE) integration
+	cd web && $(YARN) lint && $(YARN) eslint -c eslint.ssr.config.mjs . && $(YARN) build
+	@[ -d scripts/node_modules ] || npm --prefix scripts ci
+	npm --prefix scripts run test:regressions
+	@echo "release check complete: vet + database integration + web lint/build + browser regressions"
+	@echo "note: 'make e2e' (real-stack browser smoke tests) is a separate step; run it against the composed stack before release."
 e2e:
 	@[ -d scripts/node_modules ] || npm --prefix scripts ci
 	npm --prefix scripts test

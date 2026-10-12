@@ -24,9 +24,12 @@ services:
       db: {condition: service_healthy}
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      DB_HOST: db
+      DB_USER: computer
+      DB_NAME: computer
     volumes:
-      - ./db/upgrade.sql:/upgrade.sql:ro
-    command: [psql, -h, db, -U, computer, -d, computer, -v, ON_ERROR_STOP=1, -f, /upgrade.sql]
+      - ./db:/db:ro
+    command: [sh, /db/migrate.sh]
     networks: [backend]
 
   app:

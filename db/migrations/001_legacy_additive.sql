@@ -1,7 +1,25 @@
--- Idempotent, additive upgrade for the existing Docker database.
-BEGIN;
-DO $$ BEGIN
+-- 001_legacy_additive.sql — additive upgrades historically shipped as
+-- db/upgrade.sql, adopted into the ordered ledger (review MIG-01).
+-- Idempotent: every statement is guarded by an existence check, so first
+-- ledger adoption on an already-upgraded database is a no-op. From ledger
+-- adoption onward recorded migrations are immutable; new changes go into
+-- new numbered files. The runner (db/migrate.sh) applies each file in its
+-- own transaction with ON_ERROR_STOP.
+
+-- Review MIG-02: report orphaned bookmark->contact references with an
+-- actionable error before adding the foreign key, instead of failing with a
+-- bare constraint violation. Never erase relationships silently — repair is
+-- a deliberate operator decision.
+DO $$
+DECLARE orphans bigint;
+BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='Bookmark_contactId_fkey' AND conrelid='"Bookmark"'::regclass) THEN
+  SELECT count(*) INTO orphans FROM "Bookmark" b
+   WHERE b."contactId" IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM "Contact" c WHERE c.id=b."contactId");
+  IF orphans > 0 THEN
+   RAISE EXCEPTION 'migration 001: % bookmark(s) reference missing Contact rows; repair them deliberately (e.g. UPDATE "Bookmark" SET "contactId"=NULL WHERE "contactId" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "Contact" c WHERE c.id="Bookmark"."contactId")) and re-run', orphans;
+  END IF;
   ALTER TABLE "Bookmark" ADD CONSTRAINT "Bookmark_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"(id) ON DELETE SET NULL;
  END IF;
 END $$;
@@ -48,4 +66,3 @@ INSERT INTO "AppSetting"(key,value)
 SELECT 'adminBootstrap',jsonb_build_object('completed',true)
 WHERE EXISTS (SELECT 1 FROM "User" WHERE role='ADMIN' AND email NOT LIKE '%@example.com')
 ON CONFLICT(key) DO NOTHING;
-COMMIT;

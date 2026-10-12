@@ -49,9 +49,11 @@ database and `computer` role. Stop the previous PostgreSQL container before
 mounting that volume in this stack. The local configuration on this machine
 already reuses the existing volume.
 
-`db/schema.sql` initializes a **new, empty** database once. `db/upgrade.sql`
-runs as an additive migration before Go starts. Neither script drops a
-database. Do not run the initial schema against an already initialized database.
+`db/schema.sql` initializes a **new, empty** database once. `db/migrations/`
+holds the ordered, checksummed additive migrations that `db/migrate.sh` runs
+(ledger table `_migration`) before Go starts. Neither path drops a database.
+Do not run the initial schema against an already initialized database, and do
+not edit a migration that has been applied — add a new numbered file.
 
 ## Architecture
 
@@ -182,7 +184,8 @@ make test                    # Go unit tests with race detection
 make integration             # Docker PostgreSQL + CardDAV/IMAP fixture tests
 make db-shell                # psql inside the database container
 make logs                    # Go and Next.js logs
-make migrate                 # additive database upgrades
+make migrate                 # ordered additive database migrations
+make check                   # release validation (fails without DB coverage)
 ```
 
 Integration tests create/drop random test schemas; they never clear app data.

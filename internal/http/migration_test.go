@@ -2,9 +2,14 @@ package http
 
 import (
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
+// The ledgered migrations (review MIG-01) must stay idempotent: applying
+// every file twice in order cannot change the backfill guarantees.
 func TestUpgradeBackfillsLegacyWatchesWithoutChangingExistingSources(t *testing.T) {
 	srv, d := testServerDB(t)
 	_, uid := accountClient(t, srv.URL, "watcher@computer.test")
@@ -14,13 +19,29 @@ func TestUpgradeBackfillsLegacyWatchesWithoutChangingExistingSources(t *testing.
 	if _, err := d.Exec(`INSERT INTO "SignalSource"(id,type,config,enabled,"bookmarkId","ownerId") VALUES('modern','email','{"subject":"Modern"}',true,'old',$1),('existing','email','{"legacy":true,"subject":"Paused"}',false,'paused',$1)`, uid); err != nil {
 		t.Fatal(err)
 	}
-	upgrade, err := os.ReadFile("../../db/upgrade.sql")
+	entries, err := os.ReadDir("../../db/migrations")
 	if err != nil {
 		t.Fatal(err)
 	}
+	names := []string{}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".sql") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		t.Fatal("no migration files found")
+	}
 	for i := 0; i < 2; i++ {
-		if _, err := d.Exec(string(upgrade)); err != nil {
-			t.Fatal(err)
+		for _, name := range names {
+			raw, err := os.ReadFile(filepath.Join("../../db/migrations", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.Exec(string(raw)); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
 		}
 	}
 	var count int

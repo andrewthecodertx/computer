@@ -24,7 +24,7 @@ yarn install
 
 The original pre-port application used Prisma against PostgreSQL directly;
 that layer is gone. Schema and seeding now live in the Go stack
-(`../db/schema.sql`, `../db/upgrade.sql`, `make seed`).
+(`../db/schema.sql`, `../db/migrations/`, `make seed`).
 
 ## Run
 

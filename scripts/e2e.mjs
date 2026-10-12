@@ -5,6 +5,34 @@ import { chromium } from 'playwright'
 // Run with the Docker stack up. Only uniquely created QA accounts are cleaned
 // up; existing users, bookmarks and database tables are never reset.
 const base = process.env.BASE_URL || 'http://localhost:3000'
+// Review TEST-03: the cleanup path deletes accounts through the LOCAL compose
+// database, so the runner must prove the browser target is that same stack
+// before creating anything. Non-loopback targets are refused unless the
+// operator explicitly acknowledges (E2E_ALLOW_REMOTE=1) that no cleanup is
+// possible and accounts will persist (E2E_KEEP_DATA=1).
+const repoRoot = new URL('..', import.meta.url)
+const baseUrl = new URL(base)
+const loopback = ['localhost', '127.0.0.1', '::1'].includes(baseUrl.hostname)
+const keepData = process.env.E2E_KEEP_DATA === '1'
+const localDbRunning = () => {
+  try {
+    return execFileSync('docker', ['compose', 'ps', '--status', 'running', '-q', 'db'], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() !== ''
+  } catch { return false }
+}
+if (!loopback) {
+  if (process.env.E2E_ALLOW_REMOTE !== '1') {
+    console.error(`Refusing to run against non-local target ${base}: cleanup is tied to the local compose database. Use the local stack, or set E2E_ALLOW_REMOTE=1 together with E2E_KEEP_DATA=1 to accept that QA accounts will persist on the remote target.`)
+    process.exit(1)
+  }
+  if (!keepData) {
+    console.error(`Remote target ${base} cannot be cleaned up through local docker; set E2E_KEEP_DATA=1 to acknowledge created accounts will persist.`)
+    process.exit(1)
+  }
+}
+if (!keepData && !localDbRunning()) {
+  console.error('Cleanup requires the local compose db service to be running (docker compose up -d db); refusing to create QA accounts that could not be removed.')
+  process.exit(1)
+}
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] })
 const accounts = []
 const errors = []
@@ -22,6 +50,19 @@ async function json(response, status = 200) {
 try {
   const signup = await json(await context.request.post(`${base}/api/signup`, { data: { email, password, name: 'Browser QA' } }), 201)
   accounts.push(signup.userId)
+  // Target/cleanup identity preflight (review TEST-03): the account created
+  // through BASE_URL must exist in the local compose database that cleanup
+  // deletes from. If it does not, the browser target is backed by some other
+  // database — abort before creating further data.
+  if (!keepData && loopback) {
+    assert.match(signup.userId, /^[a-z0-9]+$/i)
+    const found = execFileSync('docker', ['compose', 'exec', '-T', 'db', 'psql', '-U', 'computer', '-d', 'computer', '-Atc',
+      `SELECT count(*) FROM "User" WHERE id='${signup.userId}';`], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+    if (found !== '1') {
+      throw new Error(`preflight failed: QA account ${signup.userId} created through ${base} is not present in the local compose database; target and cleanup environments differ (remove it on the target environment)`)
+    }
+    console.log('PASS: browser target and cleanup database are the same stack')
+  }
   await page.goto(`${base}/login`)
   await page.getByPlaceholder('Email', { exact: true }).fill(email)
   await page.getByPlaceholder('Password', { exact: true }).fill(password)
@@ -125,12 +166,12 @@ try {
   throw error
 } finally {
   await browser.close()
-  if (process.env.E2E_KEEP_DATA !== '1' && accounts.length) {
+  if (!keepData && accounts.length) {
     // Cleanup failures must not mask the real test error; log them and fail
     // the run only when the tests themselves passed.
     try {
       assert.ok(accounts.every(id => /^[a-z0-9]+$/i.test(id)))
-      execFileSync('docker', ['compose', 'exec', '-T', 'db', 'psql', '-U', 'computer', '-d', 'computer', '-v', 'ON_ERROR_STOP=1', '-c', `DELETE FROM "User" WHERE id IN (${accounts.map(id => `'${id}'`).join(',')});`], { cwd: new URL('..', import.meta.url), stdio: 'inherit' })
+      execFileSync('docker', ['compose', 'exec', '-T', 'db', 'psql', '-U', 'computer', '-d', 'computer', '-v', 'ON_ERROR_STOP=1', '-c', `DELETE FROM "User" WHERE id IN (${accounts.map(id => `'${id}'`).join(',')});`], { cwd: repoRoot, stdio: 'inherit' })
     } catch (cleanupError) {
       console.error(`QA account cleanup failed (${accounts.join(',')}); delete manually.`, cleanupError.message)
       if (!testFailed) process.exitCode = 1
