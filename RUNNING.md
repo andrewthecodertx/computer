@@ -180,6 +180,36 @@ recreation, and image rebuilds.
 **Do not use `docker compose down -v` or delete that volume if you want to
 keep your data.** The volume is not a backup; back up the database separately.
 
+### Backups and restore
+
+Take dumps with the database running (review OPS-03: a dump is only a backup
+once a restore from it has been proven):
+
+```sh
+docker compose exec -T db pg_dump -U computer -d computer | gzip > computer-$(date -u +%Y%m%d).sql.gz
+cp .env env-$(date -u +%Y%m%d).bak   # AUTH_SECRET / ENCRYPTION_KEY / POSTGRES_PASSWORD
+```
+
+Keep the dump **and** the `.env` snapshot together and copy both off-host:
+stored IMAP passwords are AES-GCM ciphertext, and without the secret they
+were encrypted under, a restored database cannot decrypt them. The
+server deploy script (`scripts/server-deploy.sh`) does this automatically
+before every deploy into `/var/backups/computer` (0600 dumps, 15 retained);
+it starts a stopped database rather than skipping the backup silently.
+
+Restore into an isolated environment first to verify a dump before trusting
+it:
+
+```sh
+docker compose up -d db                       # fresh volume = empty database
+gunzip -c computer-YYYYMMDD.sql.gz | docker compose exec -T db psql -U computer -d computer
+```
+
+Then restore the matching `.env` so the secrets can decrypt integration
+data, and start the stack. Migrations are additive, so any current or newer
+application release reads an older dump; reverting to an older data state
+means restoring that dump, not reverting SQL.
+
 ### Updating the app
 
 Back up your database and `.env` before updating. Then run:

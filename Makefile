@@ -1,4 +1,4 @@
-.PHONY: run docker stop docker-down db-up db-shell build vet test integration check e2e logs migrate seed deploy
+.PHONY: run docker stop docker-down db-up db-shell build vet test integration check audit e2e logs migrate seed deploy
 run docker:
 	docker compose up -d --build
 stop docker-down:
@@ -36,6 +36,14 @@ check:
 	npm --prefix scripts run test:regressions
 	@echo "release check complete: vet + database integration + web lint/build + browser regressions"
 	@echo "note: 'make e2e' (real-stack browser smoke tests) is a separate step; run it against the composed stack before release."
+# Dependency advisory scanning (review "Dependency assessment boundary"):
+# opt-in because it needs network access and the Go vuln tool installed
+# (go install golang.org/x/vuln/cmd/govulncheck@latest).
+audit:
+	@command -v govulncheck >/dev/null 2>&1 || { echo "error: govulncheck not installed: go install golang.org/x/vuln/cmd/govulncheck@latest" >&2; exit 1; }
+	govulncheck ./internal/... .
+	cd web && $(YARN) audit
+	npm --prefix scripts audit
 e2e:
 	@[ -d scripts/node_modules ] || npm --prefix scripts ci
 	npm --prefix scripts test

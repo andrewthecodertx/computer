@@ -54,6 +54,10 @@ holds the ordered, checksummed additive migrations that `db/migrate.sh` runs
 (ledger table `_migration`) before Go starts. Neither path drops a database.
 Do not run the initial schema against an already initialized database, and do
 not edit a migration that has been applied — add a new numbered file.
+Migrations are additive (new columns/tables/indexes with defaults), so the
+previous application release keeps working against a migrated database;
+rolling the data itself back means restoring the pre-deploy dump (see
+RUNNING.md), not reverting SQL.
 
 ## Architecture
 
@@ -98,6 +102,11 @@ not edit a migration that has been applied — add a new numbered file.
 - Public bookmark links deliberately publish the title, description, notes,
   due date, tags and preview; contacts, alerts, mailbox watches and the
   owner identity stay private. The share panel states this before you toggle.
+- Remote preview images and favicons are loaded by your browser directly
+  from the third-party host, with `referrerPolicy="no-referrer"` so the app
+  URL is not disclosed; opening a page can still let those hosts observe the
+  request. Server-side fetches (previews, CardDAV, IMAP) never touch private
+  network ranges.
 - Alerts: browser notifications and in-app dismissal, polled every five minutes.
 - Nextcloud: CardDAV REPORT sync using each user's app password. Credentials
   are used for that request only, not stored.
@@ -186,6 +195,7 @@ make db-shell                # psql inside the database container
 make logs                    # Go and Next.js logs
 make migrate                 # ordered additive database migrations
 make check                   # release validation (fails without DB coverage)
+make audit                   # dependency advisory scans (needs govulncheck)
 ```
 
 Integration tests create/drop random test schemas; they never clear app data.

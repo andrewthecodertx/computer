@@ -10,8 +10,18 @@
 - Product semantics (decided, do not "fix" silently): tag sharing is
   group-wide — every recipient sees all bookmarks under a shared tag,
   including ones other recipients add; public bookmark links intentionally
-  publish notes and dueDate. Keep the tags share panel and the detail
-  sheet's public-toggle disclosure in sync with these rules.
+  publish notes and dueDate but carry NO owner attribution (the README
+  promises owner identity stays private). Keep the tags share panel and the
+  detail sheet's public-toggle disclosure in sync with these rules.
+- Bookmark API responses are permission-specific: shared readers receive a
+  narrowed projection without contact, recipient list, alerts, mailbox
+  watches or board placement — UI code must keep treating those fields as
+  optional (see the `Bookmark` type in `components/app-shell.tsx`).
+- Page autosave (`lib/page-autosave.ts`): a version conflict is a distinct
+  paused state. Recovery drafts persist their original base version, typing
+  never resolves a conflict, and only the banner actions (overwrite /
+  save-as-copy / discard) may touch remote content. Remote preview/favicon
+  images always render with `referrerPolicy="no-referrer"`.
 - Client-owned Authelia integration remains stubbed. `auth.ts` rejects OIDC
   sign-in until verified identities are mapped to local Go users. See
   `docs/AUTHELIA.md`; do not assume an OIDC subject is a database user ID.
