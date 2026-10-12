@@ -97,10 +97,15 @@ database. Do not run the initial schema against an already initialized database.
 - Nextcloud: CardDAV REPORT sync using each user's app password. Credentials
   are used for that request only, not stored.
 - IMAP: encrypted per-user settings, real login tests, sender/subject searches,
-  email watchers, and Message-ID deduplication. TLS certificates are verified.
-  Configure integrations in Settings, then check watchers from a bookmark.
+  email watchers, and Message-ID deduplication. Verified TLS is required —
+  plaintext mailbox logins are rejected. Watcher ingestion is incremental: a
+  durable per-source UID checkpoint processes bounded batches until caught up
+  instead of re-scanning the last 50 matches. Configure integrations in
+  Settings, then check watchers from a bookmark.
   Enabled email watchers also run every five minutes in the Go process,
-  including watches enabled with the original mailbox-watch switch.
+  including watches enabled with the original mailbox-watch switch. The
+  scheduler runs users with bounded concurrency, per-user failure backoff,
+  and a database-backed lease so extra instances never double-poll a mailbox.
 
 ### Connecting Authelia (OIDC)
 

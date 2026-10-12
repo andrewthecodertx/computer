@@ -38,6 +38,10 @@ services:
       DATABASE_URL: postgres://computer:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/computer?sslmode=disable
       AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env}
       NEXTAUTH_SECRET: ${AUTH_SECRET}
+      # Optional dedicated key for stored integration credentials (review
+      # OPS-01): rotating AUTH_SECRET no longer invalidates IMAP passwords
+      # when ENCRYPTION_KEY is set. Back it up with the database.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-0}

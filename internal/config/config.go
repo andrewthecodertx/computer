@@ -51,6 +51,19 @@ func (c *Config) Secret() string {
 	return c.AuthSecret
 }
 
+// EncryptionSecret returns the key material for at-rest encryption of
+// integration credentials (review OPS-01). A dedicated ENCRYPTION_KEY lets
+// operators rotate AUTH_SECRET (sessions) without invalidating stored IMAP
+// passwords. Without it the auth secret remains the key, matching the
+// original derivation, and stored rows keep decrypting via the legacy
+// fallback in signals.LoadMailbox.
+func (c *Config) EncryptionSecret() string {
+	if v := os.Getenv("ENCRYPTION_KEY"); v != "" {
+		return v
+	}
+	return c.Secret()
+}
+
 // CookieSecure reports whether session cookies must carry the Secure flag.
 // An explicit COOKIE_SECURE setting wins; otherwise the NEXTAUTH_URL scheme
 // decides, so TLS deployments are secure by default without knowing about

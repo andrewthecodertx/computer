@@ -208,6 +208,13 @@ func mailboxData(b object) (signals.Mailbox, error) {
 	if v, ok := b["tls"].(bool); ok {
 		m.TLS = v
 	}
+	// Review NET-02: mailbox credentials must never travel over a plaintext
+	// socket. Insecure settings are rejected at the API boundary; the
+	// development-only INTEGRATIONS_ALLOW_INSECURE_IMAP escape hatch mirrors
+	// netguard's fixture flag and is never set in production Compose.
+	if !m.TLS && !signals.AllowInsecure() {
+		return m, bad("TLS is required for mailbox connections")
+	}
 	if m.Folder == "" {
 		m.Folder = "INBOX"
 	}
@@ -247,7 +254,7 @@ func HandleImapSave(w http.ResponseWriter, r *http.Request) {
 		}
 		pw = str(v, "password")
 	} else {
-		pw, e = crypt.Encrypt(m.Password, config.Load().Secret())
+		pw, e = crypt.Encrypt(m.Password, config.Load().EncryptionSecret())
 		if e != nil {
 			respond(w, 0, nil, e)
 			return

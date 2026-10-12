@@ -26,4 +26,12 @@ ALTER TABLE "SignalSource" ALTER COLUMN config TYPE jsonb USING config::jsonb;
 -- Optimistic concurrency for page saves (review DATA-01): content saves bump
 -- this revision and a stale base version in PATCH is rejected with 409.
 ALTER TABLE "Page" ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+-- Durable per-source mailbox ingestion checkpoints (review SYNC-02): polls
+-- process only UIDs newer than lastUid and advance only after durable inserts.
+CREATE TABLE IF NOT EXISTS "SignalCheckpoint" (
+  "sourceId" text PRIMARY KEY REFERENCES "SignalSource"(id) ON DELETE CASCADE,
+  "uidValidity" bigint NOT NULL,
+  "lastUid" bigint NOT NULL,
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
 COMMIT;

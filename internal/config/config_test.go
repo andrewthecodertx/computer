@@ -34,3 +34,17 @@ func TestSecretPrecedence(t *testing.T) {
 		t.Fatal("AUTH_SECRET fallback broken")
 	}
 }
+
+// Review OPS-01: a dedicated ENCRYPTION_KEY decouples integration-credential
+// encryption from the session signing secret.
+func TestEncryptionSecretPrecedence(t *testing.T) {
+	c := &Config{AuthSecret: "auth"}
+	t.Setenv("ENCRYPTION_KEY", "")
+	if c.EncryptionSecret() != "auth" {
+		t.Fatal("without ENCRYPTION_KEY the auth secret must remain the key")
+	}
+	t.Setenv("ENCRYPTION_KEY", "dedicated-key")
+	if c.EncryptionSecret() != "dedicated-key" {
+		t.Fatal("ENCRYPTION_KEY must win over the auth secret")
+	}
+}

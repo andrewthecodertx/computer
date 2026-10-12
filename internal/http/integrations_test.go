@@ -14,7 +14,7 @@ import (
 )
 
 func TestExternalIntegrations(t *testing.T) {
-	srv := testServer(t)
+	srv, d := testServerDB(t)
 	jar, _ := cookiejar.New(nil)
 	a := apiClient{t, &http.Client{Jar: jar}, srv.URL}
 	credentials := map[string]any{"email": "integrations@computer.test", "password": "test-password"}
@@ -72,6 +72,14 @@ END:VCARD</card:address-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:pr
 	v := a.request("POST", "/api/bookmarks/"+id+"/signals", map[string]any{"action": "check"}, 200)
 	if v["created"] != float64(1) {
 		t.Fatal("IMAP signal creation", v)
+	}
+	// Review SYNC-02: the pass persisted a UID checkpoint for the source.
+	var lastUID int64
+	if e := d.QueryRow(`SELECT "lastUid" FROM "SignalCheckpoint"`).Scan(&lastUID); e != nil {
+		t.Fatal("checkpoint not persisted:", e)
+	}
+	if lastUID < 1 {
+		t.Fatal("checkpoint did not advance:", lastUID)
 	}
 	v = a.request("POST", "/api/bookmarks/"+id+"/signals", map[string]any{"action": "check"}, 200)
 	if v["created"] != float64(0) {

@@ -213,6 +213,17 @@ CREATE TABLE "SignalSource" (
 CREATE INDEX "SignalSource_bookmarkId_idx" ON "SignalSource"("bookmarkId");
 CREATE INDEX "SignalSource_ownerId_idx" ON "SignalSource"("ownerId");
 
+-- 2.14b SignalCheckpoint (review SYNC-02): durable per-source mailbox
+-- ingestion state. A poll processes only UIDs newer than lastUid while
+-- uidValidity matches; the checkpoint advances only after the batch's
+-- signals are durably inserted. A uidValidity change resets ingestion.
+CREATE TABLE "SignalCheckpoint" (
+  "sourceId" text PRIMARY KEY REFERENCES "SignalSource"(id) ON DELETE CASCADE,
+  "uidValidity" bigint NOT NULL,
+  "lastUid" bigint NOT NULL,
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+
 -- 2.15 Signal
 CREATE TABLE "Signal" (
   id text PRIMARY KEY,

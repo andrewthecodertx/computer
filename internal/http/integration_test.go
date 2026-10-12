@@ -33,6 +33,10 @@ func testServerDB(t *testing.T) (*httptest.Server, *db.DB) {
 	// CardDAV/IMAP fakes listen on loopback; netguard blocks private ranges by
 	// default (production compose never sets this).
 	t.Setenv("INTEGRATIONS_ALLOW_PRIVATE", "1")
+	// The IMAP fixture is a plaintext loopback server; production refuses
+	// non-TLS mailboxes (review NET-02) and this flag is the test-only escape
+	// hatch (see signals.AllowInsecure).
+	t.Setenv("INTEGRATIONS_ALLOW_INSECURE_IMAP", "1")
 	admin, e := db.New(&config.Config{DatabaseURL: dsn})
 	if e != nil {
 		t.Fatal(e)

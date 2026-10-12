@@ -32,7 +32,9 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
       const res = await fetch('/api/settings/imap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(imapConfig),
+        // tls is forced on: legacy stored configs with tls=false migrate to
+        // verified TLS on the next save (review NET-02).
+        body: JSON.stringify({ ...imapConfig, tls: true }),
       })
       if (res.ok) toast.success('IMAP settings saved')
       else toast.error((await res.json().catch(() => null))?.error ?? 'Failed to save')
@@ -46,7 +48,7 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
       const res = await fetch('/api/imap/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(imapConfig),
+        body: JSON.stringify({ ...imapConfig, tls: true }),
       })
       const data = await res.json().catch(() => null)
       if (res.ok && data?.ok) toast.success('Connection successful!')
@@ -126,10 +128,9 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
                 <Input value={imapConfig.folder} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setImapConfig(p => ({ ...p, folder: e.target.value }))} />
               </div>
               <div className="flex items-end">
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={imapConfig.tls} onChange={() => setImapConfig(p => ({ ...p, tls: !p.tls }))} className="rounded" />
-                  Use TLS
-                </label>
+                {/* Review NET-02: mailbox logins always run over verified TLS;
+                    the backend rejects insecure settings, so there is no toggle. */}
+                <p className="text-sm text-muted-foreground">TLS is required (implicit TLS, port 993 by default)</p>
               </div>
             </div>
             <div className="flex gap-2">

@@ -77,8 +77,17 @@ random hexadecimal value to avoid special characters in the connection URL.
 Keep the `OIDC_*` placeholders as supplied: use email/password login for now.
 
 Keep `.env` for future starts and upgrades. It is ignored by Git. **Keep
-`AUTH_SECRET` unchanged:** changing it invalidates sessions and makes saved
-IMAP passwords unreadable. Back up `.env` with your database backups.
+`AUTH_SECRET` unchanged:** changing it invalidates sessions, and — unless a
+separate `ENCRYPTION_KEY` is set — makes saved IMAP passwords unreadable.
+Setting `ENCRYPTION_KEY` (a random hex string, backed up with the database)
+decouples integration-credential encryption from session signing: you can
+then rotate `AUTH_SECRET` without losing stored mailbox passwords, and rows
+encrypted under the old derivation are re-encrypted transparently on first
+use. Back up `.env` with your database backups: without the secrets it holds,
+encrypted integration data in a database backup cannot be decrypted.
+
+Mailbox connections always use verified implicit TLS (port 993 by default);
+plaintext IMAP logins are rejected.
 
 ## 3. Build and start
 
