@@ -111,6 +111,16 @@ func HandleContactsSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base, _ := url.Parse(str(b, "nextcloudUrl"))
+	// CardDAV transport (review recheck): Basic-auth credentials must never
+	// travel plaintext. https is required unless the netguard escape hatch is
+	// set (loopback test fakes / deliberate LAN deployments — never
+	// production Compose). Redirects are not followed at all
+	// (ErrUseLastResponse), so a verified origin cannot be downgraded, and
+	// the path join below is pinned to the same host.
+	if base.Scheme != "https" && !netguard.AllowPrivate() {
+		respond(w, 0, nil, bad("Nextcloud URL must use https"))
+		return
+	}
 	path := str(b, "cardDavPath")
 	if path == "" {
 		path = "/remote.php/dav/addressbooks/users/" + url.PathEscape(str(b, "username")) + "/contacts/"

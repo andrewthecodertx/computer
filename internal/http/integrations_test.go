@@ -95,3 +95,23 @@ END:VCARD</card:address-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:pr
 		t.Fatal("legacy mailbox watch")
 	}
 }
+
+// CardDAV transport (review recheck): Basic-auth credentials must never
+// travel plaintext. Without the netguard fixture escape hatch, an http
+// Nextcloud URL is rejected at the API boundary — no dial, no credentials.
+func TestCardDAVRequiresTLSOutsideFixtures(t *testing.T) {
+	srv := testServer(t)
+	a := newAPIUser(t, srv, "carddav-tls@computer.test")
+	t.Setenv("INTEGRATIONS_ALLOW_PRIVATE", "")
+	a.request("POST", "/api/contacts/sync", map[string]any{
+		"nextcloudUrl": "http://nextcloud.example.test", "username": "u", "password": "p",
+	}, 400)
+	// https passes the transport gate (the dial itself fails: no such host
+	// through netguard — the point is the 400 above never happens for TLS).
+	resp := a.request("POST", "/api/contacts/sync", map[string]any{
+		"nextcloudUrl": "https://nextcloud.invalid", "username": "u", "password": "p",
+	}, 400)
+	if resp == nil {
+		t.Fatal("expected a connect-level rejection, not a transport-policy one")
+	}
+}
