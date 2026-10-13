@@ -19,10 +19,12 @@ test:
 	go test -race ./internal/...
 integration:
 	docker compose run --rm tests
-# schema.sql <-> migration-chain convergence (review MIG-03): fails when the
-# two paths to the same schema drift apart.
+# schema.sql <-> migration-chain convergence + runner atomicity proofs
+# (review MIG-03): fails when the two paths to the same schema drift apart
+# or when apply/record atomicity regresses. Scratch databases only.
 db-converge:
 	docker compose run --rm converge
+	docker compose run --rm converge sh /db/migrate-atomicity.sh
 # Web toolchain command; override when yarn comes through corepack:
 #   make check YARN="corepack yarn"
 YARN ?= yarn
