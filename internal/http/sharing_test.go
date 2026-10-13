@@ -30,6 +30,23 @@ func TestRevocationAndForeignRelations(t *testing.T) {
 	b.request("GET", "/api/bookmarks/"+id, nil, 200)
 	a.request("DELETE", "/api/tags/"+tag+"/share/"+bid, nil, 200)
 	b.request("GET", "/api/bookmarks/"+id, nil, 404)
+	// Unsharing a tag must remove every discovery surface, not just the
+	// detail path (review recheck): list and search share the single
+	// BookmarkVisible predicate, so prove it holds end-to-end.
+	for _, q := range []string{"", "?search=127.0.0.1"} {
+		var list []map[string]any
+		res, e := b.c.Get(srv.URL + "/api/bookmarks" + q)
+		if e != nil {
+			t.Fatal(e)
+		}
+		json.NewDecoder(res.Body).Decode(&list)
+		res.Body.Close()
+		for _, item := range list {
+			if item["id"] == id {
+				t.Fatalf("revoked bookmark still visible in list %q", q)
+			}
+		}
+	}
 	a.request("POST", "/api/shared-dates", map[string]any{"date": "2026-10-07", "recipientIds": []string{bid}}, 201)
 	response, e := a.c.Get(srv.URL + "/api/shared-dates")
 	if e != nil {
