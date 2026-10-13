@@ -16,7 +16,8 @@ type Draft = {
 }
 
 // Storage envelope: content plus the server version it was based on. Plain
-// string drafts written by older builds are still recovered (base unknown).
+// string drafts written by older builds are still recovered, but their
+// unknown base pauses recovery for review (DATA-06) — never a silent rebase.
 type Envelope = { content: string; baseVersion?: number }
 
 // Thrown by the save callback when the server rejects a stale base version
@@ -82,8 +83,13 @@ export class PageAutosave {
       } catch { /* Ignore unavailable storage or malformed drafts. */ }
     }
     if (!draft) return undefined
-    if (draft.conflict === null && draft.baseVersion !== undefined &&
-        typeof serverVersion === 'number' && draft.baseVersion !== serverVersion) {
+    // A known stale base (DATA-03) — or an unknown one (review DATA-06):
+    // legacy plain-string drafts and envelopes stored before base tracking
+    // cannot prove they predate the remote content, so recovery pauses them
+    // for explicit review (compare via discard-to-load, copy, overwrite)
+    // instead of letting the next keystroke save over a newer version.
+    if (draft.conflict === null && typeof serverVersion === 'number' &&
+        (draft.baseVersion === undefined || draft.baseVersion !== serverVersion)) {
       draft.conflict = serverVersion
     }
     this.state(id, draft.conflict !== null ? 'conflict' : 'dirty')
@@ -146,6 +152,12 @@ export class PageAutosave {
         const current = this.versions.get(id)
         if (current !== undefined) draft.baseVersion = current
       }
+      // Review DATA-07: refresh the stored envelope after every successful
+      // iteration, not only from edit(). If a later save in this loop fails
+      // (or a reload interrupts it), recovery must see the newest content
+      // with the advanced base — a stale stored base would flag an already
+      // clean draft as a spurious conflict.
+      this.store(id, draft)
     }
     if (draft.timer) { clearTimeout(draft.timer); draft.timer = null }
     this.store(id, null)
@@ -167,6 +179,9 @@ export class PageAutosave {
     this.versions.set(id, draft.conflict)
     draft.baseVersion = draft.conflict
     draft.conflict = null
+    // Review DATA-07: persist the rebased envelope immediately so a failed
+    // overwrite save still recovers against the version it chose to replace.
+    this.store(id, draft)
     this.state(id, 'dirty')
     return this.flush(id)
   }

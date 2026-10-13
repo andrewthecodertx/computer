@@ -468,8 +468,9 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
             <div role="alert" className="mb-4 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
               <p className="font-medium text-foreground">This page was changed elsewhere</p>
               <p className="mt-1 text-muted-foreground">
-                Your local draft is based on an older version, so autosave is paused and nothing
-                is overwritten until you choose. Your draft stays in the editor below.
+                Your local draft is based on an older version — or its base version is unknown —
+                so autosave is paused and nothing is overwritten until you choose. Your draft
+                stays in the editor below.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button size="sm" variant="destructive" onClick={overwriteRemote}>Overwrite with my draft</Button>

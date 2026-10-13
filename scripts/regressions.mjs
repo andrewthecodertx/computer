@@ -13,6 +13,12 @@ const bookmarks = Array.from({ length: 205 }, (_, i) => ({
   isPublic: false, imapWatchEnabled: false, alertAt: null, dueDate: null, createdAt: '2026-10-07T00:00:00Z', updatedAt: '2026-10-07T00:00:00Z',
 }))
 let failSaves = false
+// Fails only saves whose body.content matches (deterministic mid-loop
+// failure for the DATA-07 envelope test — no racing the serial queue).
+let failContent = null
+// Records Authorization headers of POST /api/auth/signout so the browser
+// sign-out test can prove the Next server reached Go's revocation endpoint.
+const signouts = []
 let delaySaves = 0
 let activeSaves = 0
 let maxConcurrentSaves = 0
@@ -28,6 +34,7 @@ const api = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://fixture')
     let result = []
     if (url.pathname === '/api/auth/login') result = { user: { id: 'fixture-user', name: 'Fixture', email: body.email, role: 'USER' }, tokenVersion: 1 }
+    else if (url.pathname === '/api/auth/signout' && req.method === 'POST') { signouts.push(req.headers.authorization || ''); result = { ok: true } }
     else if (url.pathname === '/api/me') result = { user: { id: 'fixture-user' }, effectiveUser: { id: 'fixture-user' }, isAdmin: false, viewingAs: null }
     // The list endpoint is a metadata projection: content bodies stay out (PERF-01).
     else if (url.pathname === '/api/pages') result = [...pages.values()].map(({ content, ...summary }) => summary)
@@ -36,6 +43,7 @@ const api = http.createServer(async (req, res) => {
       if (req.method === 'PATCH') {
         patchAttempts++
         if (failSaves) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":"Fixture save failed"}'); return }
+        if (failContent !== null && body.content === failContent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":"Fixture save failed"}'); return }
         const target = pages.get(id)
         // Optimistic concurrency (DATA-01): a stale base version is a 409.
         if (body.version !== undefined && body.version !== target.version) {
@@ -221,6 +229,47 @@ try {
   await eventually(() => editor.inputValue().then(value => value === 'Remote saved while draft failed'), 'Discard did not load the remote content')
   console.log('PASS: recovered drafts keep their original base and conflict instead of rebasing')
 
+  // Unknown-provenance draft (review DATA-06): a legacy plain-string draft
+  // carries no baseVersion, so recovery cannot prove it predates the remote
+  // content. It must pause in the review-required conflict state instead of
+  // saving over whatever the server holds.
+  await page.goto(`${base}/pages?id=a`)
+  await eventually(() => page.getByRole('textbox', { name: 'Page title' }).inputValue().then(v => v === 'Page A'), 'Page A did not open')
+  await page.evaluate(() => sessionStorage.setItem('computer:page-draft:a', JSON.stringify('Legacy draft of unknown origin')))
+  const attemptsBeforeLegacy = patchAttempts
+  await page.reload()
+  await eventually(() => editor.inputValue().then(value => value === 'Legacy draft of unknown origin'), 'Legacy draft not recovered')
+  await page.getByText('This page was changed elsewhere', { exact: true }).waitFor()
+  await new Promise(resolve => setTimeout(resolve, 1000))
+  assert.equal(patchAttempts, attemptsBeforeLegacy, 'Unknown-base draft saved without review')
+  assert.equal(pages.get('a').content, 'Typing must not overwrite', 'Unknown-base draft clobbered the remote content')
+  await page.getByRole('button', { name: 'Discard my draft and load latest', exact: true }).click()
+  await eventually(() => editor.inputValue().then(value => value === 'Typing must not overwrite'), 'Discard did not load the remote content')
+  console.log('PASS: unknown-base legacy drafts pause for review instead of saving')
+
+  // Envelope refresh (review DATA-07): when a later save in the same serial
+  // loop fails, the stored recovery envelope must carry the newest content
+  // AND the base advanced by the earlier success — otherwise reload shows a
+  // spurious conflict for a draft that was already cleanly rebased.
+  delaySaves = 900
+  failContent = 'Envelope part two'
+  await page.goto(`${base}/pages?id=b`)
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await editor.fill('Envelope part one')
+  await eventually(() => activeSaves === 1, 'First envelope save did not start')
+  await editor.fill('Envelope part two')
+  await page.getByText('Could not save page. Your draft is kept in this tab; retry saving.').first().waitFor()
+  assert.equal(pages.get('b').content, 'Envelope part one', 'First save of the loop did not land')
+  await page.reload()
+  await eventually(() => editor.inputValue().then(value => value === 'Envelope part two'), 'Newest loop content not recovered')
+  assert.equal(await page.getByText('This page was changed elsewhere', { exact: true }).count(), 0,
+    'Recovery hit a spurious conflict — the stored base was not refreshed after the successful save')
+  delaySaves = 0
+  failContent = null
+  await page.getByRole('button', { name: 'Save now', exact: true }).click()
+  await eventually(() => pages.get('b').content === 'Envelope part two', 'Retry did not persist the recovered draft')
+  console.log('PASS: recovery envelope keeps the latest content and refreshed base')
+
   await page.goto(`${base}/bookmarks`)
   await eventually(() => page.locator('tbody tr').count().then(n => n === 205), 'Collection truncated at 200')
   assert.ok(paginatedRequests > 0, 'Cursor not forwarded through proxy')
@@ -238,6 +287,23 @@ try {
   assert.equal(bookmarks[0].alertAt, '2026-10-08T15:30:00.000Z')
   assert.deepEqual(errors, [], 'Browser runtime errors')
   console.log('PASS: 205 bookmarks displayed; URL/description/tags editable; local alert time converted to UTC')
+
+  // Browser sign-out must reach Go's revocation (review AUTH-LIFECYCLE): the
+  // Next server's signOut event calls POST /api/auth/signout with a signed
+  // assertion, so the tokenVersion bump kills Go cookie sessions and any
+  // previously minted assertions — not just the local NextAuth JWT.
+  await page.keyboard.press('Escape') // close the bookmark sheet so the top bar is reachable
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await page.waitForURL(`${base}/login`)
+  await eventually(() => signouts.length > 0, 'Go signout was not called during browser sign-out')
+  const authHeader = signouts[0]
+  assert.ok(authHeader.startsWith('Bearer '), 'Signout call carried no bearer assertion')
+  const claim = JSON.parse(Buffer.from(authHeader.slice('Bearer '.length).split('.')[1], 'base64url').toString())
+  assert.equal(claim.uid, 'fixture-user')
+  assert.equal(claim.typ, 'assertion')
+  assert.equal(claim.ver, 1)
+  assert.deepEqual(errors, [], 'Browser runtime errors during sign-out')
+  console.log('PASS: browser sign-out revokes sessions through the Go backend')
 } finally {
   await browser?.close()
   web.kill('SIGTERM')

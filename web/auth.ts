@@ -1,5 +1,6 @@
 import NextAuth from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
+import jwt from 'jsonwebtoken'
 import { getOidcStatus } from '@/lib/oidc-config'
 
 // NextAuth owns the browser session and the eventual client-managed OIDC flow.
@@ -51,6 +52,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async session({ session, token }) {
       if (session.user) { session.user.id = token.id as string; session.user.ver = token.ver }
       return session
+    },
+  },
+  events: {
+    // Review AUTH-LIFECYCLE: a browser sign-out must reach Go's revocation.
+    // Without this the tokenVersion never bumps on NextAuth sign-out:
+    // previously minted assertions stay valid for the rest of their (≤120s)
+    // lifetime and the user's Go cookie sessions survive the logout. Go's
+    // /api/auth/signout means "sign out everywhere" — deliberately the same
+    // semantics here. Fail-open: if Go is unreachable the local sign-out
+    // still completes, degrading to the previous behavior.
+    async signOut(message) {
+      const token = 'token' in message ? message.token : null
+      const secret = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET
+      const id = typeof token?.id === 'string' ? token.id : ''
+      const ver = typeof token?.ver === 'number' ? token.ver : 0
+      if (!secret || !id || ver < 1) return
+      try {
+        await fetch(`${process.env.API_BASE_URL || 'http://localhost:8080'}/api/auth/signout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            // Same short-lived assertion the data proxy signs (lib/api.ts).
+            Authorization: `Bearer ${jwt.sign({ uid: id, ver, typ: 'assertion' }, secret, { algorithm: 'HS256', issuer: 'computer', expiresIn: '60s' })}`,
+          },
+          cache: 'no-store',
+        })
+      } catch { /* local sign-out proceeds; the assertion channel dies with the NextAuth JWT */ }
     },
   },
 })

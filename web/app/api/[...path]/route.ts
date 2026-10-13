@@ -2,6 +2,11 @@ import { NextRequest } from 'next/server'
 import { backendFetch } from '@/lib/api'
 
 export const dynamic = 'force-dynamic'
+// Go's handlers cap JSON bodies at 1 MiB (http.MaxBytesReader). Enforce the
+// same cap at the proxy boundary (review: frontend proxy body limits) so
+// oversized or chunked payloads are rejected here instead of being buffered
+// through the Next server first.
+const MAX_BODY_BYTES = 1 << 20
 async function proxy(request: NextRequest) {
   // NextAuth handles its own explicit /api/auth/* route; this catches all data
   // routes and preserves JSON, Markdown downloads, statuses and view-as cookies.
@@ -14,6 +19,10 @@ async function proxy(request: NextRequest) {
   const clientIP = request.headers.get('x-real-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
   if (clientIP) headers.set('x-computer-client-ip', clientIP)
   if (!['GET', 'HEAD'].includes(request.method)) {
+    const declared = Number(request.headers.get('content-length') || 0)
+    if (declared > MAX_BODY_BYTES) {
+      return Response.json({ error: 'Request body too large' }, { status: 413 })
+    }
     // Defense in depth: the SameSite session cookie is the primary CSRF
     // barrier. Origin is checked when present (parsed env origin, so a
     // trailing slash or path in NEXTAUTH_URL cannot break the match);
@@ -33,9 +42,17 @@ async function proxy(request: NextRequest) {
     }
   }
   try {
+    let body: ArrayBuffer | undefined
+    if (!['GET', 'HEAD'].includes(request.method)) {
+      body = await request.arrayBuffer()
+      // Chunked requests can omit Content-Length; enforce the cap on the
+      // buffered body too.
+      if (body.byteLength > MAX_BODY_BYTES) {
+        return Response.json({ error: 'Request body too large' }, { status: 413 })
+      }
+    }
     const response = await backendFetch(request.nextUrl.pathname + request.nextUrl.search, {
-      method: request.method, headers,
-      body: ['GET', 'HEAD'].includes(request.method) ? undefined : await request.arrayBuffer(),
+      method: request.method, headers, body,
     })
     const outgoing = new Headers()
     for (const name of ['content-type', 'content-disposition', 'set-cookie', 'x-next-cursor']) {
