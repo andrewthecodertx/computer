@@ -17,6 +17,14 @@
   narrowed projection without contact, recipient list, alerts, mailbox
   watches or board placement — UI code must keep treating those fields as
   optional (see the `Bookmark` type in `components/app-shell.tsx`).
+- Collections workspace (`app/(app)/collections/client.tsx`): membership is
+  contextual and never grants access — revoked bookmarks vanish from item
+  surfaces, so never assume an item implies visibility. Every mutating PATCH
+  sends the expected `version`; a 409 reloads the server state instead of
+  clobbering. The filter editor mirrors the server's per-type operator
+  allowlists (`FILTER_OPS`); keep them in sync with
+  `internal/handlers/collections.go`. Board views group by one select
+  property; table/board edit the same membership rows, never copies.
 - Page autosave (`lib/page-autosave.ts`): a version conflict is a distinct
   paused state. Recovery drafts persist their original base version, and
   drafts whose base is unknown (legacy storage) pause for review as well;
