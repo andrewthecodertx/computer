@@ -114,6 +114,22 @@ services:
     command: [go, test, -race, -count=1, -v, ./internal/...]
     networks: [backend]
 
+  # Fails when db/schema.sql drifts from the migration chain (review MIG-03).
+  converge:
+    profiles: [test]
+    image: postgres:16.15-alpine
+    restart: "no"
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      DB_HOST: db
+      DB_USER: computer
+    volumes:
+      - ./db:/db:ro
+    command: [sh, /db/check-convergence.sh]
+    networks: [backend]
+
 volumes:
   pgdata:
     name: ${POSTGRES_VOLUME:-computer_pgdata}

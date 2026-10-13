@@ -1,4 +1,4 @@
-.PHONY: run docker stop docker-down db-up db-shell build vet test integration check audit e2e logs migrate seed deploy
+.PHONY: run docker stop docker-down db-up db-shell build vet test integration db-converge check audit e2e logs migrate seed deploy
 run docker:
 	docker compose up -d --build
 stop docker-down:
@@ -19,6 +19,10 @@ test:
 	go test -race ./internal/...
 integration:
 	docker compose run --rm tests
+# schema.sql <-> migration-chain convergence (review MIG-03): fails when the
+# two paths to the same schema drift apart.
+db-converge:
+	docker compose run --rm converge
 # Web toolchain command; override when yarn comes through corepack:
 #   make check YARN="corepack yarn"
 YARN ?= yarn
@@ -31,10 +35,11 @@ check:
 	$(MAKE) build
 	$(MAKE) vet
 	$(MAKE) integration
+	$(MAKE) db-converge
 	cd web && $(YARN) lint && $(YARN) eslint -c eslint.ssr.config.mjs . && $(YARN) build
 	@[ -d scripts/node_modules ] || npm --prefix scripts ci
 	npm --prefix scripts run test:regressions
-	@echo "release check complete: vet + database integration + web lint/build + browser regressions"
+	@echo "release check complete: vet + database integration + schema convergence + web lint/build + browser regressions"
 	@echo "note: 'make e2e' (real-stack browser smoke tests) is a separate step; run it against the composed stack before release."
 # Dependency advisory scanning (review "Dependency assessment boundary"):
 # opt-in because it needs network access and the Go vuln tool installed

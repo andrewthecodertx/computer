@@ -51,13 +51,19 @@ already reuses the existing volume.
 
 `db/schema.sql` initializes a **new, empty** database once. `db/migrations/`
 holds the ordered, checksummed additive migrations that `db/migrate.sh` runs
-(ledger table `_migration`) before Go starts. Neither path drops a database.
+(ledger table `_migration`) before Go starts. Each migration is applied and
+recorded in a single transaction under an advisory lock, so a crash never
+leaves an applied file unrecorded (or vice versa) and a second concurrent
+runner aborts instead of double-applying. Neither path drops a database.
 Do not run the initial schema against an already initialized database, and do
 not edit a migration that has been applied — add a new numbered file.
 Migrations are additive (new columns/tables/indexes with defaults), so the
 previous application release keeps working against a migrated database;
 rolling the data itself back means restoring the pre-deploy dump (see
-RUNNING.md), not reverting SQL.
+RUNNING.md), not reverting SQL. Because schema.sql and the chain are two
+paths to the same schema, every schema change needs both a schema.sql edit
+and a new migration; `make db-converge` (included in `make check`) fails
+when they drift apart.
 
 ## Architecture
 
@@ -194,6 +200,7 @@ make integration             # Docker PostgreSQL + CardDAV/IMAP fixture tests
 make db-shell                # psql inside the database container
 make logs                    # Go and Next.js logs
 make migrate                 # ordered additive database migrations
+make db-converge             # schema.sql vs migration-chain drift check
 make check                   # release validation (fails without DB coverage)
 make audit                   # dependency advisory scans (needs govulncheck)
 ```

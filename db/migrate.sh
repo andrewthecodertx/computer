@@ -1,11 +1,21 @@
 #!/bin/sh
 # Ordered, checksummed migration runner (review MIG-01).
 #
-# Applies every /db/migrations/*.sql file exactly once, in name order, each
-# in its own transaction (psql -1 with ON_ERROR_STOP), and records it in the
-# _migration ledger. A recorded file is immutable: if its checksum no longer
-# matches, the runner aborts before applying anything else. Migration files
-# must remain idempotent so a crash between apply and record is recoverable.
+# Applies every /db/migrations/*.sql file exactly once, in name order, and
+# records it in the _migration ledger. Apply and record share ONE transaction
+# under a fixed advisory lock (review MIG-03): a crash can no longer leave an
+# applied file unrecorded (or a recorded file unapplied), and a concurrent
+# runner blocks on the lock, then aborts on the ledger primary key instead of
+# double-applying. A recorded file is immutable: if its checksum no longer
+# matches, the runner aborts before applying anything else.
+#
+# Migration files must therefore be transaction-safe and must NOT carry
+# their own BEGIN/COMMIT (the runner wraps each file): statements that cannot
+# run inside a transaction block (CREATE INDEX CONCURRENTLY, VACUUM, ...) are
+# NOT supported by this runner — handle those as explicit operator steps
+# outside the ledger. Files stay idempotent by convention (defense in depth;
+# migration 001 must remain so for first ledger adoption on databases already
+# upgraded via the legacy upgrade.sql).
 #
 # Environment: PGPASSWORD (required), DB_HOST, DB_USER, DB_NAME, MIGRATIONS.
 set -eu
@@ -36,8 +46,14 @@ for f in "$MIGRATIONS"/*.sql; do
     continue
   fi
   echo "applying $name"
-  psql -1 -q -f "$f"
-  # ON CONFLICT covers a crash between apply and record; files are idempotent.
-  psql -qc "INSERT INTO _migration(name,checksum) VALUES('$name','$sum') ON CONFLICT(name) DO NOTHING"
+  # One transaction: psql executes interleaved -c/-f options under -1 as a
+  # single transaction (PostgreSQL >= 12). Take the lock (arbitrary fixed
+  # key), record, then apply — any failure rolls back both. Deliberately no
+  # ON CONFLICT: a runner that lost the race must fail loudly on the primary
+  # key rather than silently re-execute an already-recorded file.
+  psql -1 -q \
+    -c 'DO $$ BEGIN PERFORM pg_advisory_xact_lock(742417); END $$' \
+    -c "INSERT INTO _migration(name,checksum) VALUES('$name','$sum')" \
+    -f "$f"
 done
 echo "migrations up to date"

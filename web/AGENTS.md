@@ -18,10 +18,14 @@
   watches or board placement — UI code must keep treating those fields as
   optional (see the `Bookmark` type in `components/app-shell.tsx`).
 - Page autosave (`lib/page-autosave.ts`): a version conflict is a distinct
-  paused state. Recovery drafts persist their original base version, typing
-  never resolves a conflict, and only the banner actions (overwrite /
-  save-as-copy / discard) may touch remote content. Remote preview/favicon
-  images always render with `referrerPolicy="no-referrer"`.
+  paused state. Recovery drafts persist their original base version, and
+  drafts whose base is unknown (legacy storage) pause for review as well;
+  typing never resolves a conflict, and only the banner actions (overwrite /
+  save-as-copy / discard) may touch remote content. Successful saves refresh
+  the stored envelope so recovery never sees a stale base. Content saves
+  must carry `version` (the Go API rejects content PATCHes without it).
+  Remote preview/favicon images always render with
+  `referrerPolicy="no-referrer"`.
 - Client-owned Authelia integration remains stubbed. `auth.ts` rejects OIDC
   sign-in until verified identities are mapped to local Go users. See
   `docs/AUTHELIA.md`; do not assume an OIDC subject is a database user ID.
