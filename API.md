@@ -96,7 +96,7 @@ Tags, columns and contacts are checked for accessibility/ownership.
 | POST | `/api/pages` | 201 page; body `{title?,content?}` |
 | PUT | `/api/pages` | `{ok:true}`; complete `{order:[id,...]}` |
 | GET | `/api/pages/{id}` | Page plus ordered `bookmarks:[{bookmark}]` |
-| PATCH | `/api/pages/{id}` | Updated page; `{title?,content?,pinned?,icon?,addBookmarkId?,removeBookmarkId?}` |
+| PATCH | `/api/pages/{id}` | Updated page; `{title?,content?,pinned?,icon?,version?,addBookmarkId?,removeBookmarkId?}`. `version` (the base revision from GET) is REQUIRED with `content`: 400 when missing, 409 when stale. Metadata-only patches stay version-free and do not bump the revision |
 | DELETE | `/api/pages/{id}` | `{ok:true}`; keeps bookmarks |
 | GET | `/api/pages/{id}/markdown` | Markdown attachment |
 

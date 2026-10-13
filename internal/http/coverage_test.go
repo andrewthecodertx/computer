@@ -267,10 +267,11 @@ func TestSignalSchedulerRunOnce(t *testing.T) {
 	}
 }
 
-// Page saves enforce optimistic concurrency (review DATA-01): a stale base
-// version is rejected with 409 and leaves the row untouched, content saves
-// bump the revision, and metadata patches neither require nor bump it. The
-// list projection omits content bodies (review PERF-01).
+// Page saves enforce optimistic concurrency (review DATA-01/DATA-05): a stale
+// base version is rejected with 409 and a missing version with 400, both
+// leaving the row untouched; content saves bump the revision, and metadata
+// patches neither require nor bump it. The list projection omits content
+// bodies (review PERF-01).
 func TestPageVersionAndListProjection(t *testing.T) {
 	srv := testServer(t)
 	alice := newAPIUser(t, srv, "pagever@computer.test")
@@ -286,6 +287,13 @@ func TestPageVersionAndListProjection(t *testing.T) {
 	saved := alice.request("PATCH", "/api/pages/"+id, map[string]any{"content": "second", "version": 1}, 200)
 	if saved["version"].(float64) != 2 {
 		t.Fatalf("content save did not bump version: %v", saved["version"])
+	}
+	// Review DATA-05: omitting the version cannot bypass concurrency — the
+	// write is rejected and the row is untouched. Metadata patches stay
+	// version-free (they do not bump the revision either).
+	alice.request("PATCH", "/api/pages/"+id, map[string]any{"content": "unversioned clobber"}, 400)
+	if v := alice.request("GET", "/api/pages/"+id, nil, 200); v["content"] != "second" || v["version"].(float64) != 2 {
+		t.Fatalf("version-less content write mutated the page: %v", v)
 	}
 	pin := alice.request("PATCH", "/api/pages/"+id, map[string]any{"pinned": true}, 200)
 	if pin["version"].(float64) != 2 {

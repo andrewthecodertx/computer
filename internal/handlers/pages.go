@@ -112,6 +112,15 @@ func HandlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		baseVersion, hasVersion = int(f), true
 	}
+	// Review DATA-05: concurrency must not be optional at the API boundary.
+	// A content write without a base version is rejected outright — otherwise
+	// any script or stale client could silently clobber newer content by
+	// omitting the field. Explicit overwrites re-fetch the latest version and
+	// send it (web `resolveOverwrite`); they never bypass this check.
+	if _, hasContent := d["content"]; hasContent && !hasVersion {
+		respond(w, 0, nil, bad("version is required when saving content; refetch the page and retry"))
+		return
+	}
 	d["updatedAt"] = time.Now().UTC()
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
 		// Same locking discipline as page creation/reorder: serializes
