@@ -269,4 +269,62 @@ CREATE INDEX "SharedDate_creatorId_idx" ON "SharedDate"("creatorId");
 CREATE INDEX "SharedDate_date_idx" ON "SharedDate"(date);
 CREATE INDEX "SharedDate_creatorId_recipientId_date_idx" ON "SharedDate"("creatorId","recipientId",date);
 CREATE INDEX "Bookmark_ownerId_alertAt_unsent_idx" ON "Bookmark"("ownerId","alertAt") WHERE NOT "alertSent";
+
+-- 2.17 Collections (Notion-like upgrades phase 2; see 002_collections.sql for
+-- the design decisions). Contextual workflow state: the same bookmark can
+-- live in many collections with independent property values; membership
+-- never broadens access and never owns the bookmark.
+CREATE TABLE "Collection" (
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  description text,
+  icon text,
+  "ownerId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+  version integer NOT NULL DEFAULT 1,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX "Collection_ownerId_idx" ON "Collection"("ownerId");
+
+CREATE TABLE "CollectionProperty" (
+  id text PRIMARY KEY,
+  "collectionId" text NOT NULL REFERENCES "Collection"(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  type text NOT NULL CHECK (type IN ('TEXT','NUMBER','SELECT','MULTI_SELECT','DATE','CHECKBOX','URL','RELATION')),
+  position integer NOT NULL DEFAULT 0,
+  config jsonb NOT NULL DEFAULT '{}',
+  version integer NOT NULL DEFAULT 1,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedAt" timestamptz NOT NULL DEFAULT now(),
+  UNIQUE ("collectionId", name)
+);
+
+CREATE TABLE "CollectionItem" (
+  id text PRIMARY KEY,
+  "collectionId" text NOT NULL REFERENCES "Collection"(id) ON DELETE CASCADE,
+  "bookmarkId" text NOT NULL REFERENCES "Bookmark"(id) ON DELETE CASCADE,
+  propertyValues jsonb NOT NULL DEFAULT '{}',
+  position integer NOT NULL DEFAULT 0,
+  version integer NOT NULL DEFAULT 1,
+  "addedAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedAt" timestamptz NOT NULL DEFAULT now(),
+  UNIQUE ("collectionId", "bookmarkId")
+);
+CREATE INDEX "CollectionItem_bookmarkId_idx" ON "CollectionItem"("bookmarkId");
+
+CREATE TABLE "CollectionView" (
+  id text PRIMARY KEY,
+  "collectionId" text NOT NULL REFERENCES "Collection"(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  type text NOT NULL DEFAULT 'TABLE' CHECK (type IN ('TABLE','BOARD','CALENDAR','LIST')),
+  position integer NOT NULL DEFAULT 0,
+  filters jsonb NOT NULL DEFAULT '{"operator":"AND","clauses":[]}',
+  sorts jsonb NOT NULL DEFAULT '[]',
+  "groupByPropertyId" text REFERENCES "CollectionProperty"(id) ON DELETE SET NULL,
+  "displaySettings" jsonb NOT NULL DEFAULT '{}',
+  version integer NOT NULL DEFAULT 1,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX "CollectionView_collectionId_idx" ON "CollectionView"("collectionId");
 COMMIT;
