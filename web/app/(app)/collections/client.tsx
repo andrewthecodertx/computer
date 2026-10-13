@@ -618,7 +618,7 @@ export function CollectionsClient() {
             <>
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <Input value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} aria-label="Collection name" className="w-72 bg-transparent font-display text-2xl font-bold tracking-tight" />
-                <span className="text-xs text-muted-foreground">{detail._count.items} item{detail._count.items === 1 ? '' : 's'}</span>
+                <span className="text-xs text-muted-foreground">{detail._count?.items ?? 0} item{(detail._count?.items ?? 0) === 1 ? '' : 's'}</span>
                 <div className="ml-auto flex items-center gap-1.5">
                   <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}><Plus className="mr-1 h-4 w-4" />Add bookmarks</Button>
                   <Button size="sm" variant="outline" onClick={() => setPropOpen(true)}><Plus className="mr-1 h-4 w-4" />Property</Button>

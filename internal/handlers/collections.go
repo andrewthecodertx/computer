@@ -80,11 +80,20 @@ func collectionDetail(r *http.Request, q db.Queryer, col object) (object, error)
 	if e != nil {
 		return nil, e
 	}
+	// Same authorized-count shape as the list endpoint: items only counts
+	// bookmarks the caller can currently see (N-10 edge case).
+	counts, e := db.One(r.Context(), q, `SELECT jsonb_build_object(
+		'items',(SELECT count(*) FROM "CollectionItem" ci JOIN "Bookmark" b ON b.id=ci."bookmarkId" WHERE ci."collectionId"=$1 AND `+db.BookmarkVisible+`),
+		'properties',(SELECT count(*) FROM "CollectionProperty" p WHERE p."collectionId"=$1),
+		'views',(SELECT count(*) FROM "CollectionView" v WHERE v."collectionId"=$1))`, str(col, "id"), user(r))
+	if e != nil {
+		return nil, e
+	}
 	out := object{}
 	for k, v := range col {
 		out[k] = v
 	}
-	out["properties"], out["views"] = props, views
+	out["properties"], out["views"], out["_count"] = props, views, counts
 	return out, nil
 }
 

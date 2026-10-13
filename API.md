@@ -114,7 +114,7 @@ the expected `version` (400 missing, 409 stale).
 |---|---|---|
 | GET | `/api/collections` | Owned collections with `_count.{items,properties,views}`; item counts include only bookmarks the caller can see |
 | POST | `/api/collections` | 201 detail `{...collection,properties:[],views:[default Table view]}`; body `{name,description?,icon?}` |
-| GET | `/api/collections/{id}` | Collection plus ordered `properties` and `views` |
+| GET | `/api/collections/{id}` | Collection plus ordered `properties`, `views` and authorized `_count.{items,properties,views}` |
 | PATCH | `/api/collections/{id}` | Updated collection; `{version,name?,description?,icon?}`, bumps `version` |
 | DELETE | `/api/collections/{id}` | `{ok:true}`; memberships/properties/views cascade, bookmarks kept |
 | POST | `/api/collections/{id}/properties` | 201 property; `{name,type,config?}`. Types: `TEXT,NUMBER,SELECT,MULTI_SELECT,DATE,CHECKBOX,URL` (`RELATION` reserved, rejected). SELECT config `{options:[{label,color?}]}` — the server assigns stable option ids; DATE config `{mode:"date"\|"datetime"}`. Duplicate name → 409 |

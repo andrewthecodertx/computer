@@ -154,13 +154,55 @@ try {
   const markdown = await context.request.get(`${base}/api/pages/${pages[0].id}/markdown`)
   assert.equal(markdown.status(), 200)
   assert.ok((await markdown.text()).includes('Browser QA bookmark'))
-  for (const [path, heading] of [['bookmarks', 'All Bookmarks'], ['tags', 'Tags'], ['calendar', 'Calendar'], ['contacts', 'Contacts'], ['settings', 'Settings']]) {
+  // Collections (Notion-like upgrades phase 2, validation scenario): an
+  // existing bookmark joins a collection without duplication, gets a
+  // collection-scoped status, and the same membership is driven from both
+  // the table view and a board view.
+  await page.goto(`${base}/collections`)
+  await page.getByRole('heading', { name: 'Collections', exact: true }).waitFor()
+  await page.getByLabel('New collection name').fill('Research')
+  await page.getByRole('button', { name: 'Create collection' }).click()
+  await page.getByText('Collection created').waitFor()
+  await page.getByRole('button', { name: 'Add bookmarks' }).click()
+  await page.getByLabel('Search bookmarks').fill('Browser QA')
+  await page.getByRole('button', { name: 'Add', exact: true }).first().click()
+  await page.keyboard.press('Escape')
+  await page.getByText('Browser QA bookmark', { exact: true }).first().waitFor()
+  await page.getByRole('button', { name: 'Property' }).click()
+  await page.getByLabel('Property name').fill('Status')
+  await page.getByRole('button', { name: 'Option', exact: true }).click()
+  await page.getByLabel('Option label').first().fill('Backlog')
+  await page.getByRole('button', { name: 'Option', exact: true }).click()
+  await page.getByLabel('Option label').nth(1).fill('Doing')
+  await page.getByRole('button', { name: 'Create property' }).click()
+  await page.getByText('Property added').waitFor()
+  await page.getByLabel('Status', { exact: true }).first().click()
+  await page.getByRole('option', { name: 'Doing' }).click()
+  await page.getByRole('button', { name: 'Add view' }).click()
+  await page.getByLabel('View name').fill('Board')
+  await page.getByLabel('View type').click()
+  await page.getByRole('option', { name: 'Board' }).click()
+  await page.getByRole('button', { name: 'Create view' }).click()
+  await page.getByText('View added').waitFor()
+  await page.getByLabel('Group by property').click()
+  await page.getByRole('option', { name: 'Status' }).click()
+  await page.getByLabel('Move Browser QA bookmark').getByText('Doing').waitFor()
+  // Moving the card on the board and reading it back in the table proves both
+  // views edit one membership, not copies.
+  await page.getByLabel('Move Browser QA bookmark').click()
+  await page.getByRole('option', { name: 'Backlog' }).click()
+  await page.getByRole('button', { name: 'Table', exact: true }).click()
+  await page.getByLabel('Status', { exact: true }).first().getByText('Backlog').waitFor()
+  const membership = await json(await context.request.get(`${base}/api/collections`))
+  assert.equal(membership[0]._count.items, 1, 'bookmark count after membership add')
+  console.log('PASS: collections — membership without duplication, typed properties, table+board over one membership')
+  for (const [path, heading] of [['bookmarks', 'All Bookmarks'], ['tags', 'Tags'], ['calendar', 'Calendar'], ['collections', 'Collections'], ['contacts', 'Contacts'], ['settings', 'Settings']]) {
     await page.goto(`${base}/${path}`)
     await page.getByRole('heading', { name: heading, exact: true }).first().waitFor()
   }
   assert.deepEqual(errors, [], 'Browser runtime errors')
   await json(await context.request.delete(`${base}/api/bookmarks/${bookmark.id}`))
-  console.log('PASS: browser login, Go-backed bookmark create/edit/delete, public sharing, quick find deep links, kanban, pages/autosave/slash-commands/export, all application screens')
+  console.log('PASS: browser login, Go-backed bookmark create/edit/delete, public sharing, quick find deep links, kanban, collections, pages/autosave/slash-commands/export, all application screens')
 } catch (error) {
   testFailed = true
   throw error
