@@ -110,7 +110,26 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux.HandleFunc("DELETE /api/shared-dates/{id}", authed(handlers.HandleSharedDateDelete))
 	mux.HandleFunc("GET /api/users/search", authed(handlers.HandleUsersSearch))
 
-	// 4.9 Public page (no login)
+	// 4.9 Collections (Notion-like upgrades phase 2). Owner-scoped in this
+	// phase; membership never broadens bookmark access (N-08).
+	mux.HandleFunc("GET /api/collections", authed(handlers.HandleCollectionsList))
+	mux.HandleFunc("POST /api/collections", authed(handlers.HandleCollectionsCreate))
+	mux.HandleFunc("GET /api/collections/{id}", authed(handlers.HandleCollectionsGet))
+	mux.HandleFunc("PATCH /api/collections/{id}", authed(handlers.HandleCollectionsUpdate))
+	mux.HandleFunc("DELETE /api/collections/{id}", authed(handlers.HandleCollectionsDelete))
+	mux.HandleFunc("POST /api/collections/{id}/properties", authed(handlers.HandleCollectionPropertiesCreate))
+	mux.HandleFunc("PATCH /api/collections/{id}/properties/{propertyId}", authed(handlers.HandleCollectionPropertiesUpdate))
+	mux.HandleFunc("DELETE /api/collections/{id}/properties/{propertyId}", authed(handlers.HandleCollectionPropertiesDelete))
+	mux.HandleFunc("GET /api/collections/{id}/items", authed(handlers.HandleCollectionItemsList))
+	mux.HandleFunc("POST /api/collections/{id}/items", authed(handlers.HandleCollectionItemsCreate))
+	mux.HandleFunc("PUT /api/collections/{id}/items", authed(handlers.HandleCollectionItemsReorder))
+	mux.HandleFunc("PATCH /api/collections/{id}/items/{itemId}", authed(handlers.HandleCollectionItemsUpdate))
+	mux.HandleFunc("DELETE /api/collections/{id}/items/{itemId}", authed(handlers.HandleCollectionItemsDelete))
+	mux.HandleFunc("POST /api/collections/{id}/views", authed(handlers.HandleCollectionViewsCreate))
+	mux.HandleFunc("PATCH /api/collections/{id}/views/{viewId}", authed(handlers.HandleCollectionViewsUpdate))
+	mux.HandleFunc("DELETE /api/collections/{id}/views/{viewId}", authed(handlers.HandleCollectionViewsDelete))
+
+	// 4.10 Public page (no login)
 	mux.HandleFunc("GET /share/bookmark/{id}", handlers.HandlePublicBookmark)
 	mux.HandleFunc("GET /api/public/bookmarks/{id}", handlers.HandlePublicBookmark)
 

@@ -303,7 +303,7 @@ CREATE TABLE "CollectionItem" (
   id text PRIMARY KEY,
   "collectionId" text NOT NULL REFERENCES "Collection"(id) ON DELETE CASCADE,
   "bookmarkId" text NOT NULL REFERENCES "Bookmark"(id) ON DELETE CASCADE,
-  propertyValues jsonb NOT NULL DEFAULT '{}',
+  "propertyValues" jsonb NOT NULL DEFAULT '{}',
   position integer NOT NULL DEFAULT 0,
   version integer NOT NULL DEFAULT 1,
   "addedAt" timestamptz NOT NULL DEFAULT now(),

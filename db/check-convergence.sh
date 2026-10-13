@@ -57,10 +57,31 @@ catalog() {
 catalog "$BASE_DB" > /tmp/base.catalog
 catalog "$CHAIN_DB" > /tmp/chain.catalog
 
-if diff -u /tmp/base.catalog /tmp/chain.catalog; then
-  echo "schema.sql and the migration chain converge"
-else
+fail() {
   echo "error: db/schema.sql and db/migrations disagree (diff above)." >&2
   echo "       Update schema.sql (fresh installs) AND ship a new numbered migration (existing installs)." >&2
   exit 1
+}
+
+# Pass 1: the chain is a structural no-op against the current schema.sql.
+diff -u /tmp/base.catalog /tmp/chain.catalog || fail
+
+# Pass 2 — upgraded-install simulation: pass 1 alone cannot see the DDL
+# inside CREATE TABLE IF NOT EXISTS blocks (schema.sql always wins there).
+# Drop every migration-created table, wipe the ledger, and re-run the chain
+# so those definitions materialize for real, then compare again. This is what
+# an existing install upgraded through the ledger ends up with. Caveat: if a
+# schema.sql table ever gains an FK to a migration-created table, the CASCADE
+# drop removes that constraint and this check fails conservatively.
+tables=$(sed -n 's/.*CREATE TABLE IF NOT EXISTS "\([^"]*\)".*/\1/p' /db/migrations/*.sql | sort -u)
+if [ -n "$tables" ]; then
+  for tb in $tables; do
+    psql -q -d "$CHAIN_DB" -c "DROP TABLE IF EXISTS \"$tb\" CASCADE"
+  done
+  psql -q -d "$CHAIN_DB" -c "DELETE FROM _migration"
+  DB_NAME="$CHAIN_DB" sh /db/migrate.sh >/dev/null
+  catalog "$CHAIN_DB" > /tmp/chain.catalog
+  diff -u /tmp/base.catalog /tmp/chain.catalog || fail
 fi
+
+echo "schema.sql and the migration chain converge (fresh and upgraded paths)"
