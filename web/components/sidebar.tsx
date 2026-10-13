@@ -6,7 +6,7 @@ import { Suspense, useCallback, useEffect, useState, useSyncExternalStore } from
 import { cn } from '@/lib/utils'
 import {
   Calendar, Tags, Users, Kanban, Link2, Settings, ChevronLeft, ChevronRight, ChevronDown,
-  FileText, Pin, PinOff, Plus, Shield, Search, MoreHorizontal, Trash2, Pencil,
+  FileText, Pin, PinOff, Plus, Shield, Search, MoreHorizontal, Trash2, Pencil, Layers,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,6 +23,7 @@ const viewItems = [
   { href: '/calendar', label: 'Calendar', icon: Calendar },
   { href: '/tags', label: 'Tags', icon: Tags },
   { href: '/kanban', label: 'Kanban', icon: Kanban },
+  { href: '/collections', label: 'Collections', icon: Layers },
   { href: '/contacts', label: 'Contacts', icon: Users },
 ]
 
