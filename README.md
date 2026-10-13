@@ -1,7 +1,8 @@
 # computer
 
 A multi-user bookmark workspace: URLs with Markdown notes, tags, calendar
-dates, editable kanban boards, pages, previews, sharing, contacts and email signals.
+dates, editable kanban boards, project collections with typed properties and
+saved views, pages, previews, sharing, contacts and email signals.
 
 ## Run the whole app
 
@@ -72,6 +73,9 @@ when they drift apart.
 - `web/`: Next.js UI and NextAuth browser sessions. Credentials are verified
   by Go. A server-side API proxy signs 60-second identity assertions; Go
   reloads roles and resolves admin impersonation on every data request.
+  Signing out in the browser also revokes backend sessions ("sign out
+  everywhere"): it bumps the user's token version, so prior assertions and
+  Go cookie sessions stop working.
 - The frontend has no runtime Prisma client or direct database connection.
 - Go also supports its own HttpOnly `computer_session` cookie for direct API
   consumers. Administration uses the real user; data uses the effective user.
@@ -99,6 +103,15 @@ when they drift apart.
   offers overwrite, save-as-copy and discard, and typing alone never
   overwrites the newer version.
 - Kanban: custom columns, card moves, reorder; deleting a column moves cards.
+- Collections: per-project workflow state over your existing bookmarks. The
+  same link joins many collections without duplication, each with its own
+  typed properties (text, number, select, multi-select, date, checkbox, URL),
+  saved table/board views, server-side filters with typed operator
+  allowlists, and manual ordering. Membership adds context — it never owns
+  or publishes the bookmark: removing an item or a whole collection keeps
+  the bookmark, and a bookmark whose share was revoked disappears from
+  collections everywhere. Every mutation carries an expected version, so
+  concurrent editors get a conflict instead of a silent overwrite.
 - Sharing: bookmarks, tags and calendar dates; recipients read shared content.
   Owners can revoke shares. Shared tags and dates expose the associated URLs.
   Tag sharing is group-wide: every recipient of a tag sees all bookmarks
@@ -115,7 +128,8 @@ when they drift apart.
   network ranges.
 - Alerts: browser notifications and in-app dismissal, polled every five minutes.
 - Nextcloud: CardDAV REPORT sync using each user's app password. Credentials
-  are used for that request only, not stored.
+  are used for that request only, not stored, and never travel plaintext:
+  the Nextcloud URL must use https (redirects are not followed).
 - IMAP: encrypted per-user settings, real login tests, sender/subject searches,
   email watchers, and Message-ID deduplication. Verified TLS is required —
   plaintext mailbox logins are rejected. Watcher ingestion is incremental: a
@@ -205,6 +219,11 @@ make check                   # release validation (fails without DB coverage)
 make audit                   # dependency advisory scans (needs govulncheck)
 ```
 
+The same release gate runs automatically on every push and pull request
+(`.github/workflows/check.yml`), including the browser smoke tests against
+the composed stack. Pass `YARN="corepack yarn"` to `make check` when yarn
+comes through corepack.
+
 Integration tests create/drop random test schemas; they never clear app data.
 They exercise CRUD, sharing, ownership boundaries, impersonation, encryption,
 CardDAV sync, IMAP login/search and signal deduplication.
@@ -220,9 +239,10 @@ CHROMIUM_PATH=/usr/bin/chromium make e2e
 ```
 
 These verify login, UI bookmark creation, Go-backed persistence, public links,
-Quick Find deep links, kanban, page autosave/slash commands/exports and every
-application screen. Test accounts have unique names and only those accounts
-are deleted afterward.
+Quick Find deep links, kanban, the collections workflow (membership without
+duplication, typed properties, table+board over one membership), page
+autosave/slash commands/exports and every application screen. Test accounts
+have unique names and only those accounts are deleted afterward.
 
 Targeted browser regressions (after `yarn build` in `web/`):
 
@@ -231,8 +251,9 @@ npm --prefix scripts run test:regressions
 ```
 
 These run an isolated Next server with API fixtures and test login CSRF,
-autosave switching/ordering/recovery, pagination, and bookmark editing without
-creating or deleting application users.
+browser sign-out revocation, autosave switching/ordering/recovery (including
+drafts whose base version is unknown, which pause for review), pagination,
+and bookmark editing without creating or deleting application users.
 
 Optional operator-provisioned account: set its address in `ADMIN_EMAILS` in
 the root `.env`, run `docker compose up -d`, then:
@@ -245,10 +266,32 @@ This trusted command creates an admin for an allowlisted address. It never
 changes an existing account's password or role, or deletes data. Additional
 existing users can be promoted from the Admin screen.
 
+## Deploying to a server
+
+Deployment is target-agnostic — there are no built-in host or domain
+defaults. Point DNS for your domain at the server, have an ssh alias (or
+host) ready, then run from the repository root:
+
+```bash
+HOST=app-server DOMAIN=computer.example.tld CERTBOT_EMAIL=ops@example.tld ./scripts/deploy.sh
+```
+
+(`make deploy` runs the same script with the same variables.) It records the
+exact git revision, refuses dirty trees unless `ALLOW_DIRTY=1`, rsyncs the
+source, and on the server: provisions Docker/nginx/certbot, writes `.env` on
+first deploy, takes a pre-deploy database dump plus `.env` snapshot into
+`/var/backups/computer` (15 retained), builds revision-tagged images, and
+installs the nginx + Let's Encrypt reverse proxy from
+`deploy/nginx/computer.conf.template`. Rollback means re-deploying an older
+revision or restoring a pre-deploy dump; migrations are additive. See
+RUNNING.md → "Running on a remote server" for the operator checklist.
+
 ## Client test build
 
 Use [RUNNING.md](RUNNING.md) for the client handoff. Test login, bookmark editing,
-tag/contact organization, calendar dates, kanban, Markdown pages/exports,
+tag/contact organization, calendar dates, kanban, a collections workflow
+(create a collection, add the same bookmark to two collections, give each a
+status, move a card on a board view), Markdown pages/exports,
 Quick Find (Ctrl/Cmd+K), slash commands in the page editor, and sharing with
 separate accounts.
 

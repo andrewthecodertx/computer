@@ -98,7 +98,7 @@ docker compose up -d --build
 The first build can take several minutes. Docker automatically:
 
 1. Starts PostgreSQL and initializes a new database.
-2. Applies the additive database migration.
+2. Applies any pending additive database migrations.
 3. Starts the Go API.
 4. Starts the Next.js web app.
 
@@ -144,6 +144,9 @@ links are also local until you configure externally accessible hosting.
 
 - Create, edit, and delete a bookmark, including its URL, description, and tags.
 - Organize bookmarks using tags, calendar dates, contacts, and kanban columns.
+- Create a collection, add an existing bookmark to it (nothing is duplicated),
+  add a select property such as Status, and switch between the table and a
+  board view over the same membership.
 - Write a Markdown page, switch between pages, and download its Markdown export.
 - Share a bookmark, tag, or date with a second account and revoke the share.
 - Open a public bookmark link in a signed-out browser window.
@@ -151,7 +154,10 @@ links are also local until you configure externally accessible hosting.
 Pages autosave after a short pause and finish saving before switching page
 tabs. If saving fails, the page remains **Unsaved** and a draft is kept in the
 current browser tab. Reconnect and click **Save now**; tab-local drafts are
-not a replacement for database backups.
+not a replacement for database backups. If another tab or device saved the
+same page first, autosave pauses with a conflict banner — choose explicitly
+between overwriting, saving a copy, or discarding; typing alone never
+overwrites the newer version.
 
 ## Everyday commands
 
@@ -260,7 +266,12 @@ and was not saved as `.env.txt`. Follow step 2 to generate the value.
 ### Port 3000 or 8080 is already in use
 
 Stop the other application or Docker stack using that port, then retry
-`docker compose up -d --build`.
+`docker compose up -d --build`. Alternatively move this stack's host ports in
+`.env` (`WEB_HOST_PORT`, `APP_HOST_PORT`). When you shift `WEB_HOST_PORT`,
+`NEXTAUTH_URL` must be updated to the same browser-facing origin (for example
+`http://localhost:3100`): the API proxy rejects requests whose Origin matches
+neither, so sign-in works but saving fails with "Invalid request origin".
+Recreate the stack with `docker compose up -d` after changing `.env`.
 
 ### The app does not open, or sign-in fails
 
@@ -287,5 +298,30 @@ Remove passwords, secrets, and personal data from anything you share.
 The default Compose ports bind to `127.0.0.1`. For remote access, configure an
 HTTPS reverse proxy to the web app on port 3000, set `NEXTAUTH_URL` to your
 public HTTPS URL, and set `COOKIE_SECURE=1`. The database remains internal to
-Docker. This guide's first-run steps cover local use; remote hosting also
-requires the server's networking and HTTPS setup.
+Docker.
+
+### Bundled deployment script
+
+The repository ships a target-agnostic deployment for exactly this setup —
+no host or domain is hardcoded. Prerequisites: a Debian/Ubuntu server with
+ssh access (an ssh config alias works well), DNS for your domain already
+pointing at it, and `rsync` + `git` on your workstation. Then, from the
+repository root:
+
+```sh
+HOST=app-server DOMAIN=computer.example.tld CERTBOT_EMAIL=ops@example.tld ./scripts/deploy.sh
+```
+
+The script deploys a **known git revision** (dirty working trees are refused
+unless `ALLOW_DIRTY=1`) and on the server provisions Docker/nginx/certbot,
+writes `.env` on first deploy, takes a pre-deploy database dump plus `.env`
+snapshot into `/var/backups/computer` (0600, 15 retained), builds
+revision-tagged images, renders the nginx + Let's Encrypt proxy from
+`deploy/nginx/computer.conf.template`, and verifies `https://DOMAIN/login`
+end to end.
+
+Rollback: re-deploy an older revision (`git checkout <rev> && ./scripts/deploy.sh`),
+or restore one of the pre-deploy dumps together with its `.env` snapshot.
+Database migrations are additive, so an older application release keeps
+working against a migrated database; rolling the data itself back means the
+dump, not reverting SQL.

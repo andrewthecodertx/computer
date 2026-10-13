@@ -60,5 +60,7 @@ migrate:
 	docker compose run --rm migrate
 seed:
 	docker compose exec -e SEED_EMAIL -e SEED_PASSWORD -e SEED_NAME app /computer --seed
+# Target-agnostic server deploy; requires HOST, DOMAIN and CERTBOT_EMAIL
+# (no defaults). See README "Deploying to a server".
 deploy:
 	./scripts/deploy.sh

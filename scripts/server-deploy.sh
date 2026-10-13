@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Server-side half of the deployment, run as root on eidcweb3 by
+# Server-side half of the deployment, run as root on the target server by
 # scripts/deploy.sh:  ssh -t HOST sudo bash .../server-deploy.sh DIR DOMAIN EMAIL USER [REVISION]
 #
 # Provisions missing packages (docker, compose plugin, nginx, certbot),
@@ -236,12 +236,12 @@ log "Stack is healthy"
 
 # --- 5. nginx reverse proxy -------------------------------------------------------
 log "Installing nginx config for $DOMAIN"
-TEMPLATE="$REMOTE_DIR/deploy/nginx/$DOMAIN.conf"
+TEMPLATE="$REMOTE_DIR/deploy/nginx/computer.conf.template"
 [ -f "$TEMPLATE" ] || die "missing $TEMPLATE (should have been rsynced)"
-# The repo template proxies the default web port; point it at this server's
+# Render the generic template with this deployment's domain and the server's
 # actual WEB_HOST_PORT binding.
 RENDERED="/tmp/$DOMAIN.$$.conf"
-sed "s|http://127.0.0.1:3000|http://127.0.0.1:$WEB_PORT|g" "$TEMPLATE" > "$RENDERED"
+sed -e "s|__DOMAIN__|$DOMAIN|g" -e "s|__WEB_PORT__|$WEB_PORT|g" "$TEMPLATE" > "$RENDERED"
 if [ -d /etc/nginx/sites-available ]; then
   install -m 644 "$RENDERED" "/etc/nginx/sites-available/$DOMAIN"
   ln -sfn "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-enabled/$DOMAIN"

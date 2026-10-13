@@ -1,0 +1,47 @@
+# nginx reverse proxy template for the computer stack.
+# scripts/server-deploy.sh renders __DOMAIN__ and __WEB_PORT__ (the server's
+# WEB_HOST_PORT binding) into the installed site config. The Go API is reached
+# only through web, as in local dev. TLS certificates come from certbot
+# (Let's Encrypt); see scripts/deploy.sh.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __DOMAIN__;
+
+    ssl_certificate     /etc/letsencrypt/live/__DOMAIN__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1h;
+    ssl_prefer_server_ciphers off;
+
+    # Aligned with the Go JSON body limit (1 MiB in internal/handlers
+    # read()) and the Next proxy's matching cap; the app has no upload
+    # routes. A larger allowance here would only make nginx/Next buffer
+    # oversized bodies before the backend rejects them (review "Body
+    # limits"). Raise deliberately together with both app limits if an
+    # upload feature ever needs it.
+    client_max_body_size 1m;
+
+    location / {
+        proxy_pass http://127.0.0.1:__WEB_PORT__;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # WebSocket upgrade (harmless when unused).
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 75s;
+    }
+}

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Deploy the computer stack to eidcweb3:/var/www/computer.
+# Deploy the computer stack to a target server of your choice.
 #
-# Run from anywhere in the repository on your workstation:
+# Run from anywhere in the repository on your workstation. The deployment
+# target is explicit — there are no built-in host or domain defaults:
 #
-#   ./scripts/deploy.sh          (or: make deploy)
+#   HOST=app-server DOMAIN=computer.example.tld CERTBOT_EMAIL=ops@example.tld \
+#     ./scripts/deploy.sh          (or: make deploy with the same variables)
 #
 # Flow: record the exact git revision, rsync the source tree to the server,
 # then run scripts/server-deploy.sh there under sudo (one password prompt) to
 # provision packages, back up the database, build the Compose stack (images
-# are tagged with the revision), and configure nginx + Let's Encrypt.
+# are tagged with the revision), and configure nginx + Let's Encrypt from
+# deploy/nginx/computer.conf.template.
 #
 # Review OPS-04: a release is a known revision — dirty working trees are
 # refused unless ALLOW_DIRTY=1 acknowledges them, the revision is recorded on
@@ -18,14 +21,17 @@
 # pre-deploy pg_dumps (+ its .env secret snapshot) from /var/backups/computer
 # on the server. Database migrations are additive.
 #
-# Requirements: ssh access to eidcweb3, rsync and git locally.
-# Overrides: HOST=... DOMAIN=... CERTBOT_EMAIL=... ALLOW_DIRTY=1 ./scripts/deploy.sh
+# Requirements: ssh access to HOST (an ssh config alias works well), rsync and
+# git locally. DNS for DOMAIN must already point at the server (certbot
+# HTTP-01). Optional overrides: REMOTE_DIR (default /var/www/computer),
+# ALLOW_DIRTY=1.
 set -euo pipefail
 
-HOST="${HOST:-eidcweb3}"
+usage="usage: HOST=ssh-host DOMAIN=app.domain.tld CERTBOT_EMAIL=ops@domain.tld ./scripts/deploy.sh"
+HOST="${HOST:?${usage}}"
+DOMAIN="${DOMAIN:?${usage}}"
+CERTBOT_EMAIL="${CERTBOT_EMAIL:?${usage}}"
 REMOTE_DIR="${REMOTE_DIR:-/var/www/computer}"
-DOMAIN="${DOMAIN:-computer.erwininteractive.com}"
-CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@erwininteractive.com}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
