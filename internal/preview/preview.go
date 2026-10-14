@@ -28,6 +28,30 @@ type Preview struct {
 func publicDial(ctx context.Context, network, address string) (net.Conn, error) {
 	return netguard.DialContext(ctx, network, address)
 }
+
+// previewClient is reused for all preview fetches (review PERF-1): a new
+// Transport per call leaked idle connections because IdleConnTimeout
+// defaulted to 0. A single client with bounded idle pool and timeout keeps
+// the connection count and file descriptors under control.
+var previewClient = &http.Client{
+	Timeout: 8 * time.Second,
+	Transport: &http.Transport{
+		DialContext:       publicDial,
+		IdleConnTimeout:   30 * time.Second,
+		MaxIdleConns:      32,
+		MaxIdleConnsPerHost: 8,
+	},
+	CheckRedirect: func(r *http.Request, via []*http.Request) error {
+		if len(via) > 5 {
+			return fmt.Errorf("too many redirects")
+		}
+		if r.URL.Scheme != "http" && r.URL.Scheme != "https" {
+			return fmt.Errorf("invalid scheme")
+		}
+		return nil
+	},
+}
+
 // FetchPreview resolves metadata for raw. The caller's context bounds the
 // fetch (review CORR-02): when the incoming request is cancelled — the user
 // closed the tab or aborted the save — the outbound I/O and HTML parsing stop
@@ -37,21 +61,12 @@ func FetchPreview(ctx context.Context, raw string) Preview {
 	if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
 		return Preview{}
 	}
-	client := http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{DialContext: publicDial}, CheckRedirect: func(r *http.Request, via []*http.Request) error {
-		if len(via) > 5 {
-			return fmt.Errorf("too many redirects")
-		}
-		if r.URL.Scheme != "http" && r.URL.Scheme != "https" {
-			return fmt.Errorf("invalid scheme")
-		}
-		return nil
-	}}
 	req, e := http.NewRequestWithContext(ctx, "GET", raw, nil)
 	if e != nil {
 		return Preview{}
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; computer/1.0)")
-	resp, e := client.Do(req)
+	resp, e := previewClient.Do(req)
 	if e != nil {
 		return Preview{}
 	}

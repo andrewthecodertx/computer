@@ -71,6 +71,9 @@ func TestTokenChannelBinding(t *testing.T) {
 		t.Fatal(e)
 	}
 	legacy := signTestToken(t, "", time.Hour, 0)
+	// Review SEC-7: cookies now require Ver >= 1. Create a versioned session
+	// cookie for the channel-binding test.
+	versionedSession := signTestToken(t, TokenTypeSession, time.Hour, 3)
 
 	bearer := func(token string) (*SessionUser, error) {
 		r := httptest.NewRequest("GET", "/api/me", nil)
@@ -98,11 +101,11 @@ func TestTokenChannelBinding(t *testing.T) {
 	if _, e := bearer(legacy); e == nil {
 		t.Fatal("typ-less token accepted as Bearer assertion")
 	}
-	if s, e := cookie(session); e != nil || s.ID != "alice" {
+	if s, e := cookie(versionedSession); e != nil || s.ID != "alice" {
 		t.Fatalf("valid session cookie rejected: %v %v", s, e)
 	}
-	if s, e := cookie(legacy); e != nil || s.ID != "alice" {
-		t.Fatalf("legacy typ-less cookie rejected: %v %v", s, e)
+	if s, e := cookie(legacy); e == nil {
+		t.Fatalf("legacy typ-less cookie with Ver=0 must be rejected: %v %v", s, e)
 	}
 	if _, e := cookie(assertion); e == nil {
 		t.Fatal("assertion accepted as cookie session")

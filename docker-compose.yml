@@ -94,7 +94,7 @@ services:
     profiles: [test]
     # Debian-based (not alpine): -race requires cgo, which needs gcc.
     # Keep the Go version in lockstep with the app Dockerfile.
-    image: golang:1.23.12
+    image: golang:1.26.1
     depends_on:
       db: {condition: service_healthy}
     working_dir: /src

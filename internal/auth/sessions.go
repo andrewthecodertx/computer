@@ -128,6 +128,14 @@ func ReadSession(r *http.Request, secret string) (*SessionUser, error) {
 	if claims.Type != "" && claims.Type != TokenTypeSession {
 		return nil, errors.New("auth: cookie token has wrong type")
 	}
+	// Review SEC-7: legacy session cookies without a `ver` claim (Ver == 0)
+	// were minted before revocation was implemented and would bypass the
+	// tokenVersion check entirely ("sign out everywhere" would not affect
+	// them until expiry). Treat a missing/zero ver as revoked so users must
+	// re-authenticate.
+	if claims.Ver < 1 {
+		return nil, errors.New("auth: session lacks required version claim")
+	}
 	return &SessionUser{ID: claims.UserID, Role: claims.Role, Ver: claims.Ver}, nil
 }
 
