@@ -16,17 +16,22 @@ func TestLimiterStoreWindow(t *testing.T) {
 	s := newLimiterStore()
 	now := time.Now()
 	for i := 0; i < 5; i++ {
-		if !s.allow("ip", 5, time.Minute, now.Add(time.Duration(i)*time.Second)) {
+		if ok, _ := s.allow("ip", 5, time.Minute, now.Add(time.Duration(i)*time.Second)); !ok {
 			t.Fatalf("request %d within limit rejected", i+1)
 		}
 	}
-	if s.allow("ip", 5, time.Minute, now.Add(10*time.Second)) {
+	// Review ERR-3: the rejection carries the remaining window time.
+	ok, retry := s.allow("ip", 5, time.Minute, now.Add(10*time.Second))
+	if ok {
 		t.Fatal("request over limit accepted")
 	}
-	if !s.allow("ip", 5, time.Minute, now.Add(61*time.Second)) {
+	if retry <= 0 || retry > time.Minute {
+		t.Fatalf("retry-after %v outside the remaining window", retry)
+	}
+	if ok, _ := s.allow("ip", 5, time.Minute, now.Add(61*time.Second)); !ok {
 		t.Fatal("request after window reset rejected")
 	}
-	if !s.allow("other", 5, time.Minute, now) {
+	if ok, _ := s.allow("other", 5, time.Minute, now); !ok {
 		t.Fatal("separate key shares the limit")
 	}
 }

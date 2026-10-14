@@ -123,9 +123,12 @@ func LoadCheckpoint(ctx context.Context, q db.Queryer, sourceID string) (Checkpo
 }
 
 // SaveCheckpoint persists cp. Callers must only advance a checkpoint after
-// the batch's signals are durably handled.
+// the batch's signals are durably handled. The update is monotonic (review
+// COR-4): when uidValidity is unchanged, lastUid only advances via GREATEST,
+// so a slower concurrent pass can never regress the checkpoint and force a
+// re-scan of messages already ingested.
 func SaveCheckpoint(ctx context.Context, q db.Queryer, sourceID string, cp Checkpoint) error {
-	_, e := q.ExecContext(ctx, `INSERT INTO "SignalCheckpoint"("sourceId","uidValidity","lastUid","updatedAt") VALUES($1,$2,$3,now()) ON CONFLICT("sourceId") DO UPDATE SET "uidValidity"=EXCLUDED."uidValidity","lastUid"=EXCLUDED."lastUid","updatedAt"=now()`, sourceID, int64(cp.UIDValidity), int64(cp.LastUID))
+	_, e := q.ExecContext(ctx, `INSERT INTO "SignalCheckpoint"("sourceId","uidValidity","lastUid","updatedAt") VALUES($1,$2,$3,now()) ON CONFLICT("sourceId") DO UPDATE SET "uidValidity"=EXCLUDED."uidValidity","lastUid"=CASE WHEN "SignalCheckpoint"."uidValidity"=EXCLUDED."uidValidity" THEN GREATEST("SignalCheckpoint"."lastUid",EXCLUDED."lastUid") ELSE EXCLUDED."lastUid" END,"updatedAt"=now()`, sourceID, int64(cp.UIDValidity), int64(cp.LastUID))
 	return e
 }
 
@@ -308,6 +311,7 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 			defer c.Logout()
 		}
 	}
+	var sourceErrs []error
 	for _, src := range sources {
 		sourceID := fmt.Sprint(src["id"])
 		status := "Checked"
@@ -329,8 +333,13 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 			}
 		}
 		if e != nil {
+			// Connection/search failures are recorded per source (lastStatus),
+			// not aggregated: a manual check must still answer 200 with the
+			// per-source outcome, and db.ErrNotFound from a missing mailbox
+			// configuration would otherwise surface as a misleading 404.
 			status = "Error: mailbox connection or search failed"
 		} else {
+			var insertErr error
 			for _, s := range events {
 				when := s.OccurredAt
 				if when.IsZero() {
@@ -338,19 +347,33 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 				}
 				res, err := d.ExecContext(ctx, `INSERT INTO "Signal"(id,"sourceType",title,summary,"externalId","occurredAt","sourceId","bookmarkId","ownerId") VALUES($1,'email',$2,$3,$4,$5,$6,$7,$8) ON CONFLICT("sourceId","externalId") DO NOTHING`, db.NewID(), s.Title, s.Summary, s.ExternalID, when, src["id"], src["bookmarkId"], user)
 				if err != nil {
-					return len(sources), created, err
+					insertErr = err
+					break
 				}
 				n, _ := res.RowsAffected()
 				created += int(n)
 			}
-			// Advance the checkpoint only after the batch is durably handled.
-			if err := SaveCheckpoint(ctx, d, sourceID, next); err != nil {
-				return len(sources), created, err
+			if insertErr != nil {
+				// Review COR-5: record the per-source failure in lastStatus
+				// and continue with the remaining sources instead of aborting
+				// the whole pass. The checkpoint does NOT advance, so the
+				// failed event and the rest of the batch are retried next
+				// pass (ON CONFLICT dedupes the ones already inserted).
+				status = "Error: signal insert failed"
+				sourceErrs = append(sourceErrs, fmt.Errorf("source %s insert: %w", sourceID, insertErr))
+			} else if err := SaveCheckpoint(ctx, d, sourceID, next); err != nil {
+				// Advance the checkpoint only after the batch is durably handled.
+				status = "Error: checkpoint save failed"
+				sourceErrs = append(sourceErrs, fmt.Errorf("source %s checkpoint: %w", sourceID, err))
 			}
 		}
+		// Record this source's status even on error so the UI can surface it.
 		if _, err := d.ExecContext(ctx, `UPDATE "SignalSource" SET "lastCheckedAt"=now(),"lastStatus"=$1,"updatedAt"=now() WHERE id=$2`, status, src["id"]); err != nil {
-			return len(sources), created, err
+			sourceErrs = append(sourceErrs, fmt.Errorf("source %s status update: %w", sourceID, err))
 		}
+	}
+	if len(sourceErrs) > 0 {
+		return len(sources), created, errors.Join(sourceErrs...)
 	}
 	return len(sources), created, nil
 }

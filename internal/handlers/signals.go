@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/signals"
@@ -34,7 +35,34 @@ func HandleSignalsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if str(b, "action") == "check" {
-		checked, created, e := signals.RunSignalChecks(r.Context(), database(r), user(r), id)
+		// Review COR-4: a manual "Check now" must not race with the scheduler
+		// or another click. Take the SAME advisory lease the scheduler uses —
+		// identical key, held on a dedicated connection because session-level
+		// advisory locks are connection-bound (a pooled lock/unlock could land
+		// on different connections and leak the lock) — and answer 409 while
+		// it is held. The 45-second cap keeps the pass inside the server's
+		// WriteTimeout so it cannot be cut off mid-mutation.
+		ctx := r.Context()
+		leaseKey := "signal-poll:" + user(r)
+		conn, e := database(r).Conn(ctx)
+		if e != nil {
+			respond(w, 0, nil, e)
+			return
+		}
+		defer conn.Close()
+		var locked bool
+		if e := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock(hashtextextended($1,0))`, leaseKey).Scan(&locked); e != nil {
+			respond(w, 0, nil, e)
+			return
+		}
+		if !locked {
+			respond(w, 0, nil, conflict("A check is already running"))
+			return
+		}
+		defer conn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtextextended($1,0))`, leaseKey)
+		job, cancel := context.WithTimeout(ctx, 45*time.Second)
+		defer cancel()
+		checked, created, e := signals.RunSignalChecks(job, database(r), user(r), id)
 		respond(w, 200, object{"checked": checked, "created": created}, e)
 		return
 	}

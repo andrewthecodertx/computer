@@ -94,18 +94,23 @@ func (s *limiterStore) sweep(now time.Time) {
 }
 
 // allow reports whether key is within limit for the window starting at first
-// use. Expired entries are swept opportunistically to bound memory.
-func (s *limiterStore) allow(key string, limit int, window time.Duration, now time.Time) bool {
+// use. Expiry returns the remaining time until the window resets so callers
+// can send an accurate Retry-After header (review ERR-3).
+func (s *limiterStore) allow(key string, limit int, window time.Duration, now time.Time) (bool, time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sweep(now)
 	c := s.m[key]
 	if c == nil || now.After(c.reset) {
 		s.m[key] = &counter{count: 1, reset: now.Add(window)}
-		return true
+		return true, 0
 	}
 	c.count++
-	return c.count <= limit
+	retry := c.reset.Sub(now)
+	if retry < 0 {
+		retry = 0
+	}
+	return c.count <= limit, retry.Truncate(time.Second) + time.Second
 }
 
 func (s *limiterStore) locked(key string, now time.Time) (time.Duration, bool) {
@@ -252,8 +257,10 @@ func tooManyRequests(w http.ResponseWriter, retry time.Duration) {
 // (review SEC-1: loopback is NOT exempt on the login endpoint).
 func RateLimitLogin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !loginIPs.allow(EffectiveClientIP(r), loginIPLimit, loginIPWindow, time.Now()) {
-			tooManyRequests(w, loginIPWindow)
+		// Review ERR-3: Retry-After carries the remaining window time, not
+		// the full window.
+		if ok, retry := loginIPs.allow(EffectiveClientIP(r), loginIPLimit, loginIPWindow, time.Now()); !ok {
+			tooManyRequests(w, retry)
 			return
 		}
 		next(w, r)
@@ -264,9 +271,11 @@ func RateLimitLogin(next http.HandlerFunc) http.HandlerFunc {
 // non-loopback peers.
 func RateLimitSignup(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !isLoopback(r) && !signupIPs.allow(EffectiveClientIP(r), signupIPLimit, signupIPWindow, time.Now()) {
-			tooManyRequests(w, signupIPWindow)
-			return
+		if !isLoopback(r) {
+			if ok, retry := signupIPs.allow(EffectiveClientIP(r), signupIPLimit, signupIPWindow, time.Now()); !ok {
+				tooManyRequests(w, retry)
+				return
+			}
 		}
 		next(w, r)
 	}
@@ -283,8 +292,8 @@ func Limiter(s *limiterStore, limit int, window time.Duration) func(http.Handler
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			ip := clientIP(r)
-			if !s.allow(ip, limit, window, time.Now()) {
-				tooManyRequests(w, window)
+			if ok, retry := s.allow(ip, limit, window, time.Now()); !ok {
+				tooManyRequests(w, retry)
 				return
 			}
 			next(w, r)

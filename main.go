@@ -25,7 +25,11 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--healthcheck" {
 		client := stdhttp.Client{Timeout: 3 * time.Second}
-		res, err := client.Get("http://127.0.0.1:8080/readyz")
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		res, err := client.Get("http://127.0.0.1:" + port + "/readyz")
 		if err != nil {
 			os.Exit(1)
 		}
