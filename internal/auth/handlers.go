@@ -212,6 +212,9 @@ func HandleAuth(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		ClearSessionCookie(w)
+		// Review SEC-6: sign-out ends impersonation too — otherwise the next
+		// admin login on that browser would silently resume view-as.
+		http.SetCookie(w, &http.Cookie{Name: ViewAsCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		writeJSON(w, 200, map[string]bool{"ok": true})
 	default:
 		failure(w, 404, "Unknown authentication endpoint")

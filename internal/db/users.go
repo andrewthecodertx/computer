@@ -69,7 +69,7 @@ func (r *UserRepo) Create(ctx context.Context, u *NewUserInput) (string, error) 
 			return err
 		}
 		var admins int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM "User" WHERE role='ADMIN' AND email NOT LIKE '%@example.com'`).Scan(&admins); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM "User" WHERE role='ADMIN' AND COALESCE(email,'') NOT LIKE '%@example.com'`).Scan(&admins); err != nil {
 			return err
 		}
 		role := u.Role

@@ -8,6 +8,7 @@ import (
 	"github.com/andrew/go-computer/internal/models"
 	"log"
 	"net/http"
+	"sync"
 )
 
 const ViewAsCookie = "computer_view_as"
@@ -76,14 +77,44 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			if c, e := r.Cookie(ViewAsCookie); e == nil && c.Value != "" && c.Value != u.ID {
 				if target, e := repo.FindByID(r.Context(), c.Value); e == nil {
 					s.ID, s.Role, s.Name, s.Email = target.ID, target.Role, target.Name, target.Email
+					// Review SEC-6: impersonation is audited. Log at most once
+					// per admin/target/method combination per process so a
+					// polling UI does not flood the log.
+					auditViewAs(u.ID, target.ID, r.Method)
 				}
 			}
+		}
+		// Review SEC-6: view-as is read-only. Mutations while impersonating
+		// are attributed to the target user, so writes must come from the
+		// admin's own identity — exit view-as first.
+		if s.ID != s.RealID && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			failure(w, 403, "Read-only while viewing as another user")
+			return
 		}
 		next.ServeHTTP(w, r.WithContext(WithSession(r.Context(), s)))
 	})
 }
 
 type sessionKey struct{}
+
+// auditViewAs logs each distinct (admin, target, method) impersonation
+// observation once per process (review SEC-6). Ids only — never names,
+// emails, or request payloads.
+var (
+	auditViewAsMu  sync.Mutex
+	auditViewAsLog = map[string]bool{}
+)
+
+func auditViewAs(adminID, targetID, method string) {
+	key := adminID + "|" + targetID + "|" + method
+	auditViewAsMu.Lock()
+	defer auditViewAsMu.Unlock()
+	if auditViewAsLog[key] {
+		return
+	}
+	auditViewAsLog[key] = true
+	log.Printf("audit: admin %s viewing as %s (%s)", adminID, targetID, method)
+}
 
 func WithSession(ctx context.Context, s *SessionUser) context.Context {
 	return context.WithValue(ctx, sessionKey{}, s)

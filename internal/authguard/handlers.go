@@ -6,12 +6,16 @@ import (
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/handlers"
+	"log"
 	"net/http"
 	"time"
 )
 
 func HandleAdminListUsers(w http.ResponseWriter, r *http.Request) {
-	v, e := db.Many(r.Context(), db.FromContext(r.Context()), `SELECT jsonb_build_object('id',u.id,'name',u.name,'email',u.email,'image',u.image,'role',u.role,'createdAt',u."createdAt",'_count',jsonb_build_object('bookmarks',(SELECT count(*) FROM "Bookmark" b WHERE b."ownerId"=u.id),'pages',(SELECT count(*) FROM "Page" p WHERE p."ownerId"=u.id),'tags',(SELECT count(*) FROM "Tag" t WHERE t."ownerId"=u.id))) FROM "User" u WHERE email NOT LIKE '%@example.com' ORDER BY "createdAt"`)
+	// COALESCE(email,'') (review COR-8): NOT LIKE evaluates to NULL for the
+	// NULL emails OIDC-sourced accounts can carry, which hid them from the
+	// admin list entirely.
+	v, e := db.Many(r.Context(), db.FromContext(r.Context()), `SELECT jsonb_build_object('id',u.id,'name',u.name,'email',u.email,'image',u.image,'role',u.role,'createdAt',u."createdAt",'_count',jsonb_build_object('bookmarks',(SELECT count(*) FROM "Bookmark" b WHERE b."ownerId"=u.id),'pages',(SELECT count(*) FROM "Page" p WHERE p."ownerId"=u.id),'tags',(SELECT count(*) FROM "Tag" t WHERE t."ownerId"=u.id))) FROM "User" u WHERE COALESCE(email,'') NOT LIKE '%@example.com' ORDER BY "createdAt"`)
 	if e != nil {
 		handlers.WriteJSON(w, 500, handlers.Error{Error: "Database unavailable"})
 		return
@@ -32,15 +36,33 @@ func HandleAdminPatchUser(w http.ResponseWriter, r *http.Request) {
 		handlers.WriteJSON(w, 400, handlers.Error{Error: "You cannot demote yourself"})
 		return
 	}
-	repo := db.NewUserRepo(db.FromContext(r.Context()))
-	if _, e := repo.FindByID(r.Context(), b.UserID); e != nil {
+	d := db.FromContext(r.Context())
+	repo := db.NewUserRepo(d)
+	target, e := repo.FindByID(r.Context(), b.UserID)
+	if e != nil {
 		handlers.WriteJSON(w, 404, handlers.Error{Error: "Not found"})
 		return
+	}
+	// Review SEC-11: an installation must keep at least one administrator.
+	// Self-demotion is already refused; this closes the "demote the last
+	// other admin" path.
+	if b.Role == "USER" && target.Role == "ADMIN" {
+		var admins int
+		if e := d.QueryRowContext(r.Context(), `SELECT count(*) FROM "User" WHERE role='ADMIN' AND COALESCE(email,'') NOT LIKE '%@example.com'`).Scan(&admins); e != nil {
+			handlers.WriteJSON(w, 500, handlers.Error{Error: "Unable to change role"})
+			return
+		}
+		if admins <= 1 {
+			handlers.WriteJSON(w, 400, handlers.Error{Error: "At least one administrator must remain"})
+			return
+		}
 	}
 	if e := repo.SetRole(r.Context(), b.UserID, b.Role); e != nil {
 		handlers.WriteJSON(w, 500, handlers.Error{Error: "Unable to change role"})
 		return
 	}
+	// Review SEC-11: role changes are audited. Ids and roles only.
+	log.Printf("audit: admin %s changed role of %s: %s -> %s", s.RealID, b.UserID, target.Role, b.Role)
 	handlers.WriteJSON(w, 200, handlers.OK{OK: true})
 }
 func HandleAdminViewAs(w http.ResponseWriter, r *http.Request) {
