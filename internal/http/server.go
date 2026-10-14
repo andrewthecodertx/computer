@@ -65,7 +65,6 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux.HandleFunc("POST /api/bookmarks/{id}/share", authed(handlers.HandleBookmarksShare))
 	mux.HandleFunc("DELETE /api/bookmarks/{id}/share/{userId}", authed(handlers.HandleBookmarkUnshare))
 	mux.HandleFunc("GET /api/bookmarks/{id}/markdown", authed(handlers.HandleBookmarksMarkdown))
-	mux.HandleFunc("GET /api/preview", authed(handlers.HandlePreview))
 
 	// 4.4 Tags
 	mux.HandleFunc("GET /api/tags", authed(handlers.HandleTagsList))

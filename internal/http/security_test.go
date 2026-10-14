@@ -56,7 +56,12 @@ func TestAdminEnrollmentRequiresTrustedIdentity(t *testing.T) {
 	user, uid := accountClient(t, srv.URL, "unverified@computer.test")
 	t.Setenv("ADMIN_EMAILS", "reserved@computer.test,unverified@computer.test")
 	// Reserved addresses answer exactly like existing accounts (no 403 oracle).
-	user.request("POST", "/api/signup", map[string]any{"email": "reserved@computer.test", "password": "test-password"}, 409)
+	// Review SEC-4: operator-reserved addresses also return 201 with empty
+	// userId to avoid an existence oracle; they are not 409.
+	reserved := user.request("POST", "/api/signup", map[string]any{"email": "reserved@computer.test", "password": "test-password"}, 201)
+	if reserved["userId"] != "" {
+		t.Fatal("operator-reserved address must return empty userId")
+	}
 	if user.request("GET", "/api/me", nil, 200)["isAdmin"] != false {
 		t.Fatal("unverified address promoted to admin")
 	}

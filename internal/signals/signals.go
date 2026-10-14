@@ -3,6 +3,7 @@ package signals
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/andrew/go-computer/internal/config"
@@ -107,14 +108,18 @@ func Search(ctx context.Context, m Mailbox, from, subject string) ([]SignalInput
 // considered. A zero value means "nothing ingested yet".
 type Checkpoint struct{ UIDValidity, LastUID uint32 }
 
-func LoadCheckpoint(ctx context.Context, q db.Queryer, sourceID string) Checkpoint {
+func LoadCheckpoint(ctx context.Context, q db.Queryer, sourceID string) (Checkpoint, error) {
 	var cp Checkpoint
 	var validity, last int64
 	e := q.QueryRowContext(ctx, `SELECT "uidValidity","lastUid" FROM "SignalCheckpoint" WHERE "sourceId"=$1`, sourceID).Scan(&validity, &last)
-	if e == nil {
-		cp.UIDValidity, cp.LastUID = uint32(validity), uint32(last)
+	if errors.Is(e, sql.ErrNoRows) {
+		return Checkpoint{}, nil
 	}
-	return cp
+	if e != nil {
+		return Checkpoint{}, e
+	}
+	cp.UIDValidity, cp.LastUID = uint32(validity), uint32(last)
+	return cp, nil
 }
 
 // SaveCheckpoint persists cp. Callers must only advance a checkpoint after
@@ -315,8 +320,13 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 			subject, _ := cfg["subject"].(string)
 			// Incremental, checkpointed ingestion (review SYNC-02): only UIDs
 			// newer than the durable checkpoint are processed, in bounded
-			// batches, until the source is caught up.
-			events, next, e = SearchConnFrom(c, m, from, subject, LoadCheckpoint(ctx, d, sourceID))
+			// batches, until the source is caught up. Review COR-3: a failed
+			// checkpoint load is surfaced as an error for this source instead
+			// of silently degrading to a zero checkpoint (full re-scan).
+			var cp Checkpoint
+			if cp, e = LoadCheckpoint(ctx, d, sourceID); e == nil {
+				events, next, e = SearchConnFrom(c, m, from, subject, cp)
+			}
 		}
 		if e != nil {
 			status = "Error: mailbox connection or search failed"

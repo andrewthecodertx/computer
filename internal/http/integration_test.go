@@ -111,7 +111,8 @@ func TestApplicationFlows(t *testing.T) {
 	}
 	au := alice.request("POST", "/api/signup", post("alice@computer.test"), 201)["userId"].(string)
 	bu := bob.request("POST", "/api/signup", post("bob@computer.test"), 201)["userId"].(string)
-	alice.request("POST", "/api/signup", post("alice@computer.test"), 409)
+	// Review SEC-4: duplicate signup returns 201 with empty userId (not 409).
+	alice.request("POST", "/api/signup", post("alice@computer.test"), 201)
 	alice.request("POST", "/api/auth/login", post("alice@computer.test"), 200)
 	bob.request("POST", "/api/auth/login", post("bob@computer.test"), 200)
 	if alice.request("GET", "/api/me", nil, 200)["isAdmin"] != true {

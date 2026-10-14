@@ -86,8 +86,10 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 		// Review SEC-6: view-as is read-only. Mutations while impersonating
 		// are attributed to the target user, so writes must come from the
-		// admin's own identity — exit view-as first.
-		if s.ID != s.RealID && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		// admin's own identity — exit view-as first. The view-as endpoint
+		// itself is exempt: it controls the impersonation session and must
+		// be writable to both start and stop the session.
+		if s.ID != s.RealID && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/api/admin/view-as" {
 			failure(w, 403, "Read-only while viewing as another user")
 			return
 		}
