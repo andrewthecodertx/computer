@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -39,6 +40,13 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 func HandleSignup(w http.ResponseWriter, r *http.Request) {
+	if !checkAuthRequest(w, r) {
+		return
+	}
+	if os.Getenv("SIGNUP_ENABLED") == "0" {
+		failure(w, 403, "Registration is disabled")
+		return
+	}
 	var req SignupRequest
 	if !decode(w, r, &req) {
 		return
@@ -60,20 +68,30 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, "Password must be at most 72 bytes")
 		return
 	}
-	if config.IsAdminEmail(req.Email) {
-		// Indistinguishable from an existing account: a distinct error here
-		// would let any caller probe the ADMIN_EMAILS list. Logged for the
-		// operator; provisioning happens via `make seed`.
-		log.Printf("signup: rejected claim of operator-reserved address %s", req.Email)
-		failure(w, 409, "User already exists")
-		return
-	}
 	repo := db.NewUserRepo(db.FromContext(r.Context()))
+	// Account enumeration (review SEC-4): a distinct 409 for a registered
+	// address is an unauthenticated existence oracle. Duplicate registrations
+	// (and claims of operator-reserved addresses) are logged for the operator
+	// and answered 201 with an empty userId, indistinguishable from a real
+	// creation; the subsequent login then either succeeds (the caller is the
+	// owner) or fails on credentials like any wrong password.
+	var existing bool
 	if _, e := repo.FindByEmail(r.Context(), req.Email); e == nil {
-		failure(w, 409, "User already exists")
-		return
+		existing = true
 	} else if !errors.Is(e, db.ErrNotFound) {
 		failure(w, 500, "Database unavailable")
+		return
+	}
+	if config.IsAdminEmail(req.Email) {
+		log.Printf("signup: rejected claim of operator-reserved address %s", req.Email)
+		existing = true
+	}
+	if existing {
+		log.Printf("signup: duplicate registration attempt")
+		// Same bcrypt cost as real registrations, so timing does not
+		// re-open the existence oracle.
+		_, _ = bcryptHashImpl(req.Password)
+		writeJSON(w, 201, SignupResponse{true, ""})
 		return
 	}
 	hash, e := bcryptHashImpl(req.Password)
@@ -88,18 +106,23 @@ func HandleSignup(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		var pg *pgconn.PgError
 		if errors.As(e, &pg) && pg.Code == "23505" {
-			failure(w, 409, "User already exists")
-		} else {
-			failure(w, 500, "Unable to create user")
+			// Racing creation: still indistinguishable.
+			writeJSON(w, 201, SignupResponse{true, ""})
+			return
 		}
+		failure(w, 500, "Unable to create user")
 		return
 	}
 	writeJSON(w, 201, SignupResponse{true, id})
 }
-func HandleLogin(w http.ResponseWriter, r *http.Request) {
+// checkAuthRequest enforces the JSON Content-Type and same-origin guards on
+// the unauthenticated auth endpoints. Applied to login and signup alike
+// (review SEC-4): both are reachable directly on the Go API when the Next
+// proxy's own Origin checks are bypassed.
+func checkAuthRequest(w http.ResponseWriter, r *http.Request) bool {
 	if strings.ToLower(strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0])) != "application/json" {
 		failure(w, 415, "Content-Type must be application/json")
-		return
+		return false
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		allowed, err := url.Parse(config.Load().NextAuthURL)
@@ -112,19 +135,26 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		if origin != scheme+"://"+r.Host && (err != nil || allowed.Host == "" || origin != allowed.Scheme+"://"+allowed.Host) {
 			failure(w, 403, "Invalid request origin")
-			return
+			return false
 		}
+	}
+	return true
+}
+func HandleLogin(w http.ResponseWriter, r *http.Request) {
+	if !checkAuthRequest(w, r) {
+		return
 	}
 	var req SigninRequest
 	if !decode(w, r, &req) {
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	if !isLoopback(r) {
-		if retry, locked := loginFailures.locked(EffectiveClientIP(r)+"|"+email, time.Now()); locked {
-			tooManyRequests(w, retry)
-			return
-		}
+	// Review SEC-1: the failure lockout applies to every peer, loopback
+	// included — the exemption previously removed all guessing protection
+	// from same-host deployments.
+	if retry, locked := loginFailures.locked(EffectiveClientIP(r)+"|"+email, time.Now()); locked {
+		tooManyRequests(w, retry)
+		return
 	}
 	u, e := db.NewUserRepo(db.FromContext(r.Context())).FindByEmail(r.Context(), email)
 	if e != nil && !errors.Is(e, db.ErrNotFound) {
@@ -140,15 +170,11 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		bcryptCheckImpl(req.Password, dummyPasswordHash)
 	}
 	if !ok {
-		if !isLoopback(r) {
-			loginFailures.noteFailure(EffectiveClientIP(r)+"|"+email, time.Now())
-		}
+		loginFailures.noteFailure(EffectiveClientIP(r)+"|"+email, time.Now())
 		failure(w, 401, "Invalid credentials")
 		return
 	}
-	if !isLoopback(r) {
-		loginFailures.noteSuccess(EffectiveClientIP(r) + "|" + email)
-	}
+	loginFailures.noteSuccess(EffectiveClientIP(r) + "|" + email)
 	if e = WriteSessionCookie(w, SessionUser{ID: u.ID, Role: u.Role, Ver: u.TokenVersion}, config.Load().Secret()); e != nil {
 		failure(w, 500, "Session unavailable")
 		return

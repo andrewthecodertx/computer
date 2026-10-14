@@ -185,6 +185,11 @@ func search(c *client.Client, m Mailbox, from, subject string, cp *Checkpoint) (
 		return nil, next, e
 	}
 	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	// truncated reports whether the per-pass cap shortened the UID list.
+	// Review COR-1: when it did, the SEARCH did NOT consider every matching
+	// message, so the high-water shortcut must stay off — otherwise UIDs past
+	// the cap would land below the new checkpoint and be dropped forever.
+	truncated := false
 	if cp != nil {
 		// Incremental ingestion: everything at or below the checkpoint has
 		// already been durably handled by an earlier pass.
@@ -197,6 +202,7 @@ func search(c *client.Client, m Mailbox, from, subject string, cp *Checkpoint) (
 		uids = filtered
 		if len(uids) > searchBatch*maxIngestBatches {
 			uids = uids[:searchBatch*maxIngestBatches]
+			truncated = true
 		}
 	} else if len(uids) > searchBatch {
 		// Preview mode: the most recent matches, best effort.
@@ -232,10 +238,13 @@ func search(c *client.Client, m Mailbox, from, subject string, cp *Checkpoint) (
 			return nil, next, e
 		}
 	}
-	if cp != nil && status.UidNext > next.LastUID+1 {
-		// The SEARCH considered every message in the folder, so non-matching
-		// UIDs below the mailbox high-water mark can be skipped for good;
-		// anything arriving after this snapshot stays above the checkpoint.
+	if cp != nil && !truncated && status.UidNext > next.LastUID+1 {
+		// The SEARCH considered every message in the folder (the cap did not
+		// shorten it), so non-matching UIDs below the mailbox high-water
+		// mark can be skipped for good; anything arriving after this snapshot
+		// stays above the checkpoint. Review COR-1: this shortcut is OFF
+		// after truncation — remaining matches get a future pass instead of
+		// being skipped forever.
 		next.LastUID = status.UidNext - 1
 	}
 	return out, next, nil

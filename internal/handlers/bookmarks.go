@@ -53,9 +53,11 @@ func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 	}
 	add := func(s string, v any) { args = append(args, v); where += " AND " + fmt.Sprintf(s, len(args)) }
 	if s := sp.Get("search"); s != "" {
-		args = append(args, "%"+s+"%")
+		// Escape LIKE wildcards (review PERF-2): an unescaped query pattern
+		// matched everything and defeated the search's selectivity.
+		args = append(args, "%"+likeEscaper.Replace(s)+"%")
 		n := len(args)
-		where += fmt.Sprintf(` AND (b.title ILIKE $%d OR b.url ILIKE $%d OR b.notes ILIKE $%d OR EXISTS(SELECT 1 FROM "BookmarkTag" bt JOIN "Tag" t ON t.id=bt."tagId" WHERE bt."bookmarkId"=b.id AND t.name ILIKE $%d))`, n, n, n, n)
+		where += fmt.Sprintf(` AND (b.title ILIKE $%d ESCAPE '\' OR b.url ILIKE $%d ESCAPE '\' OR b.notes ILIKE $%d ESCAPE '\' OR EXISTS(SELECT 1 FROM "BookmarkTag" bt JOIN "Tag" t ON t.id=bt."tagId" WHERE bt."bookmarkId"=b.id AND t.name ILIKE $%d ESCAPE '\'))`, n, n, n, n)
 	}
 	if s := sp.Get("tagId"); s != "" {
 		add(`EXISTS(SELECT 1 FROM "BookmarkTag" bt WHERE bt."bookmarkId"=b.id AND bt."tagId"=$%d)`, s)
@@ -82,7 +84,12 @@ func HandleBookmarksList(w http.ResponseWriter, r *http.Request) {
 		// Pin both sides to UTC: bare ::date casts use the Postgres session
 		// timezone, which is not pinned and would shift "due on date X".
 		add(`(b."dueDate" AT TIME ZONE 'UTC')::date=($%d::timestamptz AT TIME ZONE 'UTC')::date`, v)
-		where = strings.Replace(where, `b."ownerId"=$2`, db.BookmarkVisible, 1)
+		// Guarded exactly like tagId (review COR-7): re-injecting the
+		// visibility predicate into a list already widened by it would nest
+		// BookmarkVisible inside itself.
+		if sp.Get("shared") != "true" && !strings.Contains(where, db.BookmarkVisible) {
+			where = strings.Replace(where, `b."ownerId"=$2`, db.BookmarkVisible, 1)
+		}
 	}
 	// Port artifact: db.BookmarkVisible binds the user as $2, so $1 stays a
 	// permanently-nil placeholder and this predicate is always true. Removing

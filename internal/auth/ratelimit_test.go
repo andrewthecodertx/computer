@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -90,16 +91,29 @@ func TestRateLimitMiddleware(t *testing.T) {
 	resetRateLimits()
 	t.Cleanup(resetRateLimits)
 
-	// Loopback peers are exempt (host-local direct API consumers, tests).
-	loop := httptest.NewRequest("POST", "/api/auth/login", nil) // RemoteAddr 192.0.2.1
+	// Review SEC-1: loopback is NOT exempt on the login endpoint — same-host
+	// deployments must keep throttling for real browser logins.
+	loop := httptest.NewRequest("POST", "/api/auth/login", nil)
 	loop.RemoteAddr = "127.0.0.1:54321"
-	for i := 0; i < loginIPLimit*2; i++ {
-		w := httptest.NewRecorder()
-		RateLimitLogin(dummyHandler)(w, loop)
-		if w.Code != 204 {
-			t.Fatalf("loopback request %d limited with %d", i+1, w.Code)
-		}
+	var loopLast *httptest.ResponseRecorder
+	for i := 0; i < loginIPLimit+1; i++ {
+		loopLast = httptest.NewRecorder()
+		RateLimitLogin(dummyHandler)(loopLast, loop)
 	}
+	if loopLast.Code != http.StatusTooManyRequests {
+		t.Fatalf("loopback login exempt: got %d", loopLast.Code)
+	}
+	// Signup keeps the loopback exemption for host-local consumers.
+	resetRateLimits()
+	var loopSignup *httptest.ResponseRecorder
+	for i := 0; i < signupIPLimit*2; i++ {
+		loopSignup = httptest.NewRecorder()
+		RateLimitSignup(dummyHandler)(loopSignup, loop)
+	}
+	if loopSignup.Code != 204 {
+		t.Fatalf("loopback signup limited with %d", loopSignup.Code)
+	}
+	resetRateLimits()
 
 	// Non-loopback peers get 429 after the window limit, with Retry-After.
 	remote := httptest.NewRequest("POST", "/api/auth/login", nil)
@@ -139,34 +153,52 @@ func TestRateLimitMiddleware(t *testing.T) {
 func TestSignedForwardedClientIP(t *testing.T) {
 	t.Setenv("NEXTAUTH_SECRET", "")
 	t.Setenv("AUTH_SECRET", "ratelimit-forward-secret")
-	sign := func(ip string) string {
+	ts := time.Now().Unix()
+	sign := func(ip string, when int64) (string, string) {
 		mac := hmac.New(sha256.New, []byte("ratelimit-forward-secret"))
-		mac.Write([]byte(ip))
-		return hex.EncodeToString(mac.Sum(nil))
+		mac.Write([]byte(ip + "|" + strconv.FormatInt(when, 10)))
+		return strconv.FormatInt(when, 10), hex.EncodeToString(mac.Sum(nil))
 	}
 	r := httptest.NewRequest("POST", "/api/auth/login", nil)
 	r.RemoteAddr = "203.0.113.9:5555"
 	if got := EffectiveClientIP(r); got != "203.0.113.9" {
 		t.Fatalf("unsigned request: got %s", got)
 	}
+	hts, sig := sign("198.51.100.7", ts)
 	r.Header.Set(headerClientIP, "198.51.100.7")
-	r.Header.Set(headerClientSig, sign("198.51.100.7"))
+	r.Header.Set(headerClientTs, hts)
+	r.Header.Set(headerClientSig, sig)
 	if got := EffectiveClientIP(r); got != "198.51.100.7" {
 		t.Fatalf("signed forwarded IP ignored: got %s", got)
 	}
-	r.Header.Set(headerClientSig, sign("198.51.100.8"))
+	_, badSig := sign("198.51.100.8", ts)
+	r.Header.Set(headerClientSig, badSig)
 	if got := EffectiveClientIP(r); got != "203.0.113.9" {
 		t.Fatalf("forged signature accepted: got %s", got)
 	}
-	r.Header.Set(headerClientSig, sign("198.51.100.7"))
+	goodTs, goodSig := sign("198.51.100.7", ts)
+	r.Header.Set(headerClientSig, goodSig)
+	r.Header.Set(headerClientTs, goodTs)
 	r.Header.Set(headerClientIP, "198.51.100.7; DROP TABLE users")
 	if got := EffectiveClientIP(r); got != "203.0.113.9" {
 		t.Fatalf("non-IP forwarded value accepted: got %s", got)
 	}
+	// Review SEC-2: a forwarded identity never earns the loopback exemption,
+	// even when it attests 127.0.0.1; and stale timestamps fall back to the
+	// direct peer.
+	loopTs, loopSig := sign("127.0.0.1", ts)
 	r.Header.Set(headerClientIP, "127.0.0.1")
-	r.Header.Set(headerClientSig, sign("127.0.0.1"))
-	if !isLoopback(r) {
-		t.Fatal("signed loopback forwarded IP not treated as loopback")
+	r.Header.Set(headerClientTs, loopTs)
+	r.Header.Set(headerClientSig, loopSig)
+	if isLoopback(r) {
+		t.Fatal("signed loopback forwarded IP must not earn the exemption")
+	}
+	staleTs, staleSig := sign("198.51.100.7", ts-3600)
+	r.Header.Set(headerClientIP, "198.51.100.7")
+	r.Header.Set(headerClientTs, staleTs)
+	r.Header.Set(headerClientSig, staleSig)
+	if got := EffectiveClientIP(r); got != "203.0.113.9" {
+		t.Fatalf("stale signature accepted: got %s", got)
 	}
 }
 
@@ -174,17 +206,20 @@ func TestForwardedIPsGetSeparateBuckets(t *testing.T) {
 	t.Setenv("NEXTAUTH_SECRET", "")
 	t.Setenv("AUTH_SECRET", "ratelimit-forward-secret")
 	resetRateLimits()
-	sign := func(ip string) string {
+	ts := time.Now().Unix()
+	sign := func(ip string) (string, string) {
 		mac := hmac.New(sha256.New, []byte("ratelimit-forward-secret"))
-		mac.Write([]byte(ip))
-		return hex.EncodeToString(mac.Sum(nil))
+		mac.Write([]byte(ip + "|" + strconv.FormatInt(ts, 10)))
+		return strconv.FormatInt(ts, 10), hex.EncodeToString(mac.Sum(nil))
 	}
 	handler := RateLimitLogin(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	do := func(ip string) int {
 		r := httptest.NewRequest("POST", "/api/auth/login", nil)
 		r.RemoteAddr = "10.0.0.5:1234" // shared proxy peer
+		hts, sig := sign(ip)
 		r.Header.Set(headerClientIP, ip)
-		r.Header.Set(headerClientSig, sign(ip))
+		r.Header.Set(headerClientTs, hts)
+		r.Header.Set(headerClientSig, sig)
 		w := httptest.NewRecorder()
 		handler(w, r)
 		return w.Code

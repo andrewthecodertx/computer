@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/andrew/go-computer/internal/auth"
 	"github.com/andrew/go-computer/internal/config"
 	"github.com/andrew/go-computer/internal/db"
 	"io"
@@ -27,6 +28,10 @@ func testServerDB(t *testing.T) (*httptest.Server, *db.DB) {
 	if dsn == "" {
 		t.Skip("set TEST_DATABASE_URL to run PostgreSQL integration tests")
 	}
+	// The limiter stores are process-global and login has no loopback
+	// exemption (review SEC-1); give every test a clean slate.
+	auth.ResetRateLimits()
+	t.Cleanup(auth.ResetRateLimits)
 	t.Setenv("AUTH_SECRET", "integration-test-secret")
 	t.Setenv("NEXTAUTH_SECRET", "integration-test-secret")
 	t.Setenv("ADMIN_EMAILS", "")

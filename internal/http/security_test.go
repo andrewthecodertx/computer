@@ -3,11 +3,17 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"github.com/andrew/go-computer/internal/scripts"
 	"net/http"
 	"net/http/cookiejar"
+	"os"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestConfiguredAdminCannotBeBypassedDuringBootstrap(t *testing.T) {
@@ -156,6 +162,18 @@ func TestAdminBootstrapIsOneShot(t *testing.T) {
 	successor.request("GET", "/api/admin/users", nil, 403)
 }
 
+// Review SEC-5: with ALLOW_BOOTSTRAP_SIGNUP=0 a fresh installation must not
+// hand administrator to the first signup — provisioning stays operator-driven.
+func TestBootstrapSignupCanBeDisabled(t *testing.T) {
+	srv := testServer(t)
+	t.Setenv("ALLOW_BOOTSTRAP_SIGNUP", "0")
+	visitor, _ := accountClient(t, srv.URL, "unclaimed@computer.test")
+	if visitor.request("GET", "/api/me", nil, 200)["isAdmin"] != false {
+		t.Fatal("first signup became admin despite ALLOW_BOOTSTRAP_SIGNUP=0")
+	}
+	visitor.request("GET", "/api/admin/users", nil, 403)
+}
+
 func TestDirectLoginRejectsBrowserForgery(t *testing.T) {
 	srv := testServer(t)
 	for _, tc := range []struct {
@@ -176,5 +194,55 @@ func TestDirectLoginRejectsBrowserForgery(t *testing.T) {
 		if res.StatusCode != tc.status || len(res.Cookies()) != 0 {
 			t.Fatalf("forged login: status=%d cookies=%v", res.StatusCode, res.Cookies())
 		}
+	}
+}
+
+// Review SEC-1/SEC-2: the failure lockout keys on the proxy-attested browser
+// IP. Two different signed identities get independent lockout buckets; a
+// replayed (stale-timestamp) signature is not honored.
+func TestLoginLockoutHonorsSignedForwardedIdentity(t *testing.T) {
+	srv := testServer(t)
+	secret := os.Getenv("AUTH_SECRET")
+	sign := func(ip string, ts int64) (string, string, string) {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(ip + "|" + strconv.FormatInt(ts, 10)))
+		return ip, strconv.FormatInt(ts, 10), hex.EncodeToString(mac.Sum(nil))
+	}
+	post := func(email, password, ip string, ts int64) int {
+		body, _ := json.Marshal(map[string]any{"email": email, "password": password})
+		req, _ := http.NewRequest("POST", srv.URL+"/api/auth/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if ip != "" {
+			hip, hts, sig := sign(ip, ts)
+			req.Header.Set("X-Computer-Client-Ip", hip)
+			req.Header.Set("X-Computer-Client-Ts", hts)
+			req.Header.Set("X-Computer-Client-Sig", sig)
+		}
+		res, e := http.DefaultClient.Do(req)
+		if e != nil {
+			t.Fatal(e)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	now := time.Now().Unix()
+	// Browser A: five failures lock out its (IP, email) bucket.
+	for i := 0; i < 5; i++ { // failureThreshold
+		if code := post("victim-a@computer.test", "wrong-password", "198.51.100.1", now); code != 401 {
+			t.Fatalf("browser A attempt %d: %d", i+1, code)
+		}
+	}
+	if code := post("victim-a@computer.test", "wrong-password", "198.51.100.1", now); code != 429 {
+		t.Fatalf("browser A not locked out: %d", code)
+	}
+	// Browser B behind the same proxy peer keeps its own buckets.
+	if code := post("victim-a@computer.test", "wrong-password", "198.51.100.2", now); code != 401 {
+		t.Fatalf("browser B locked out by browser A's failures: %d", code)
+	}
+	// A stale signature (outside the ~60s window) falls back to the peer, so
+	// it cannot smuggle a fresh identity: these attempts count against the
+	// peer bucket and stay 401.
+	if code := post("victim-b@computer.test", "wrong-password", "198.51.100.9", now-3600); code != 401 {
+		t.Fatalf("stale signature changed behavior: %d", code)
 	}
 }

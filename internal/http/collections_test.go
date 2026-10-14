@@ -312,9 +312,22 @@ func TestCollectionRevocationReachesItems(t *testing.T) {
 	}
 	alice.request("PATCH", "/api/collections/"+cid+"/items/"+itemID, map[string]any{"version": 1, "position": 3}, 404)
 	alice.request("DELETE", "/api/collections/"+cid+"/items/"+itemID, nil, 404)
+	// Review COR-2: a hidden membership row must not wedge reorder. Alice
+	// adds one of her own bookmarks, then reorders the visible items — the
+	// revoked membership stays hidden at the tail instead of making every
+	// PUT /items fail "Order must contain every item exactly once".
+	own := collectionBookmark(t, alice, "https://127.0.0.1/alice-own")
+	ownItem := alice.request("POST", "/api/collections/"+cid+"/items", map[string]any{"bookmarkId": own}, 201)
+	ownID := ownItem["id"].(string)
+	visible := alice.getJSON("/api/collections/"+cid+"/items", 200)
+	if len(visible) != 1 || visible[0]["id"] != ownID {
+		t.Fatalf("expected only the own item visible, got %v", visible)
+	}
+	alice.request("PUT", "/api/collections/"+cid+"/items", map[string]any{"order": []string{ownID}}, 200)
 	// The membership row itself survives revocation: re-sharing restores it.
 	bob.request("POST", "/api/bookmarks/"+shared+"/share", map[string]any{"userIds": []string{aliceID}}, 200)
-	if len(alice.getJSON("/api/collections/"+cid+"/items", 200)) != 1 {
+	items := alice.getJSON("/api/collections/"+cid+"/items", 200)
+	if len(items) != 2 {
 		t.Fatal("re-sharing did not restore the existing membership")
 	}
 }

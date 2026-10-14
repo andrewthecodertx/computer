@@ -110,6 +110,13 @@ func TestPreviouslyUncoveredRoutes(t *testing.T) {
 	if users := alice.getJSON("/api/users/search?q=c", 200); len(users) != 0 {
 		t.Fatal("users/search short-query guard:", users)
 	}
+	// Review SEC-3: LIKE wildcards are escaped, so "%%"/"_%" cannot enumerate
+	// the whole user base. "%%" matches a literal percent-pair (2 runes, so
+	// it passes the minimum-length guard); a name literally containing "%%"
+	// still matches, but nothing else does.
+	if users := alice.getJSON("/api/users/search?q=%25%25", 200); len(users) != 0 {
+		t.Fatalf("users/search wildcard enumeration: %v", users)
+	}
 
 	// PATCH /api/kanban/columns/{id} and PUT /api/kanban/columns happy paths.
 	col := alice.request("POST", "/api/kanban/columns", map[string]any{"label": "Coverage"}, 201)["id"].(string)

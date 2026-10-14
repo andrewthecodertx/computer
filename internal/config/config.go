@@ -101,3 +101,13 @@ func IsAdminEmail(email string) bool {
 	}
 	return false
 }
+
+// AllowBootstrapSignup reports whether the first self-service signup on a
+// fresh installation may claim administrator (review SEC-5). Default is on
+// so the documented "sign up, then sign in" onboarding keeps working;
+// exposed deployments set ALLOW_BOOTSTRAP_SIGNUP=0 and provision operators
+// via ADMIN_EMAILS/seed instead, so an attacker scanning for new
+// installations cannot claim the instance.
+func AllowBootstrapSignup() bool {
+	return os.Getenv("ALLOW_BOOTSTRAP_SIGNUP") != "0"
+}

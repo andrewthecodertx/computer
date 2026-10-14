@@ -76,7 +76,7 @@ func (r *UserRepo) Create(ctx context.Context, u *NewUserInput) (string, error) 
 		if role == "" {
 			role = "USER"
 		}
-		promote := !bootstrapDone && admins == 0 && len(config.AdminEmails()) == 0 && !isTestEmail(u.Email) && role == "USER"
+		promote := config.AllowBootstrapSignup() && !bootstrapDone && admins == 0 && len(config.AdminEmails()) == 0 && !isTestEmail(u.Email) && role == "USER"
 		if promote {
 			role = "ADMIN"
 		}

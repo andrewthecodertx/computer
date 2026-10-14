@@ -1425,8 +1425,14 @@ func HandleCollectionItemsReorder(w http.ResponseWriter, r *http.Request) {
 		if _, e := collectionOwned(r, tx, cid); e != nil {
 			return e
 		}
+		// Count only items whose bookmark is still visible (review COR-2):
+		// a share revocation hides the membership row from the client, so
+		// the client can never include it in the order. Counting it here
+		// made every reorder permanently fail once any bookmark became
+		// invisible. Hidden memberships keep their rows (re-sharing restores
+		// them) and are placed after the supplied order below.
 		var count int
-		if e := tx.QueryRowContext(r.Context(), `SELECT count(*) FROM "CollectionItem" WHERE "collectionId"=$1`, cid).Scan(&count); e != nil {
+		if e := tx.QueryRowContext(r.Context(), `SELECT count(*) FROM "CollectionItem" ci JOIN "Bookmark" b ON b.id=ci."bookmarkId" WHERE ci."collectionId"=$3 AND `+db.BookmarkVisible, nil, user(r), cid).Scan(&count); e != nil {
 			return e
 		}
 		if count != len(order) {
@@ -1438,6 +1444,20 @@ func HandleCollectionItemsReorder(w http.ResponseWriter, r *http.Request) {
 		}
 		if n, _ := res.RowsAffected(); int(n) != len(order) {
 			return bad("Invalid order")
+		}
+		// Hidden items (revoked bookmarks) sort after everything the client
+		// ordered, deterministically, so they do not collide with supplied
+		// positions. BookmarkVisible binds the user as $2, so $1 stays a
+		// permanently-nil placeholder, matching the port artifact the list
+		// query documents.
+		if _, e := tx.ExecContext(r.Context(), `UPDATE "CollectionItem" AS ci SET position=sub.pos,"updatedAt"=now() FROM (
+			SELECT id, `+strconv.Itoa(len(order))+` + ROW_NUMBER() OVER (ORDER BY id) AS pos
+			FROM "CollectionItem"
+			WHERE "collectionId"=$3 AND id <> ALL($4::text[])
+			AND NOT EXISTS(SELECT 1 FROM "Bookmark" b WHERE b.id="CollectionItem"."bookmarkId" AND `+db.BookmarkVisible+`)
+			AND $1::text IS NULL
+		) sub WHERE ci.id=sub.id`, nil, user(r), cid, order); e != nil {
+			return e
 		}
 		return nil
 	})

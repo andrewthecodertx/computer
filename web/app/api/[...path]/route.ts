@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { backendFetch } from '@/lib/api'
+import { backendFetch, observedClientIP } from '@/lib/api'
 
 export const dynamic = 'force-dynamic'
 // Go's handlers cap JSON bodies at 1 MiB (http.MaxBytesReader). Enforce the
@@ -12,11 +12,11 @@ async function proxy(request: NextRequest) {
   // routes and preserves JSON, Markdown downloads, statuses and view-as cookies.
   const headers = new Headers()
   if (request.headers.has('content-type')) headers.set('Content-Type', request.headers.get('content-type')!)
-  // Review AUTH-RATE: pass the observed browser IP to backendFetch, which
-  // signs it for Go's rate limiting. Production nginx overwrites X-Real-IP
-  // with the true peer; a deployment exposing Next directly must not accept
-  // client-supplied values for this header from untrusted clients.
-  const clientIP = request.headers.get('x-real-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+  // Review SEC-2: forward the observed browser IP only when TRUSTED_PROXY=1
+  // pins the boundary that overwrites X-Real-IP (the shipped nginx template
+  // does). X-Forwarded-For is deliberately ignored: its leftmost entry is
+  // client-controlled. backendFetch adds the timestamped HMAC signature.
+  const clientIP = observedClientIP(request.headers)
   if (clientIP) headers.set('x-computer-client-ip', clientIP)
   if (!['GET', 'HEAD'].includes(request.method)) {
     const declared = Number(request.headers.get('content-length') || 0)
