@@ -271,3 +271,23 @@ func RateLimitSignup(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r)
 	}
 }
+
+// NewLimiterStore creates a new in-memory rate limiter store. Exported so
+// callers (e.g. public endpoints) can have independent buckets.
+func NewLimiterStore() *limiterStore { return newLimiterStore() }
+
+// Limiter wraps a handler with a simple per-IP fixed-window rate limit.
+// Uses the direct peer IP (no forwarded headers) and does not exempt
+// loopback — public endpoints apply to every peer.
+func Limiter(s *limiterStore, limit int, window time.Duration) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			ip := clientIP(r)
+			if !s.allow(ip, limit, window, time.Now()) {
+				tooManyRequests(w, window)
+				return
+			}
+			next(w, r)
+		}
+	}
+}

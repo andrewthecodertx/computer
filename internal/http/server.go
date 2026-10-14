@@ -130,8 +130,16 @@ func NewServer(cfg *config.Config, database *db.DB) *http.Server {
 	mux.HandleFunc("DELETE /api/collections/{id}/views/{viewId}", authed(handlers.HandleCollectionViewsDelete))
 
 	// 4.10 Public page (no login)
-	mux.HandleFunc("GET /share/bookmark/{id}", handlers.HandlePublicBookmark)
-	mux.HandleFunc("GET /api/public/bookmarks/{id}", handlers.HandlePublicBookmark)
+	// Review SEC-10: public endpoints get per-IP rate limiting (no auth
+	// context, so no per-user limit). 30 req/min for public bookmark lookup,
+	// 20 req/min for preview (heavier outbound work).
+	publicBookmarkLimiter := auth.NewLimiterStore()
+	previewLimiter := auth.NewLimiterStore()
+	publicLimit := auth.Limiter(publicBookmarkLimiter, 30, time.Minute)
+	previewLimit := auth.Limiter(previewLimiter, 20, time.Minute)
+	mux.HandleFunc("GET /share/bookmark/{id}", publicLimit(handlers.HandlePublicBookmark))
+	mux.HandleFunc("GET /api/public/bookmarks/{id}", publicLimit(handlers.HandlePublicBookmark))
+	mux.HandleFunc("GET /api/preview", previewLimit(authed(handlers.HandlePreview)))
 
 	return &http.Server{
 		Handler:      withDB(database, mux),
