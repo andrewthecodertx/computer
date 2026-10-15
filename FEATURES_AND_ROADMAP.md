@@ -1,198 +1,192 @@
-# Computer — Features and Roadmap
+# Computer — What It Does and Where It's Going
 
-A self-hosted, multi-user bookmark workspace. URLs are first-class records
-with Markdown notes, live previews, contacts, and email signals attached;
-pages, kanban boards, and Notion-style collections provide the workspace
-context around them.
+Computer is a self-hosted bookmark workspace for teams and individuals.
+Think of it as "every link you save, plus everything around it": notes,
+previews, due dates, projects, boards, calendars, contacts, and even email
+watchers — all in one place you control.
 
-**Stack:** Go 1.26 API (`internal/`), Next.js + NextAuth web client (`web/`),
-PostgreSQL with checksummed additive migrations (`db/`), Docker Compose
-deployment with an nginx TLS template (`deploy/`). A release gate
-(`make check` + CI) runs DB-backed integration tests, browser regressions,
-and real-stack e2e on every push.
+It runs entirely on your own hardware with Docker: a Go API, a Next.js web
+app, and PostgreSQL. Nothing is sent to a third party.
 
 ---
 
-## Features
+## What you can do today
 
-### Bookmarks and link management
-- URL records with title, description, Markdown notes, due dates, and tags.
-- **Live link previews**: server-side fetch of Open Graph metadata and
-  favicon (SSRF-guarded, connection-pooled, rate-limited).
-- Search and filtering (`search`, `tagId`, `contactId`, `kanban`, `date`,
-  `shared`) with keyset-cursor pagination (`X-Next-Cursor`, max 200/page).
-- Markdown export per bookmark (`.md` attachment).
-- Permission-specific responses: owners see everything; shared readers get a
-  narrowed projection (never contacts, recipients, alerts, or mailbox
-  watches); public links carry no owner attribution.
+### Save and organize links
 
-### Pages (Markdown workspace)
-- Markdown editor with preview/edit toggle, Notion-style **slash menu**
-  (`/` for headings, to-dos, lists, quotes, dividers, code) and `[]` + space
-  to-do shortcut.
-- Notion-style paste: a bare URL offers to upgrade to a titled link once the
-  preview resolves — only on explicit click, so undo stays intact.
-- **Versioned autosave**: every content save carries a base `version`; a
-  stale base returns 409 and the editor pauses with an Overwrite / Save as
-  copy / Discard banner. Typing is never consent to overwrite.
-- Tab-local recovery drafts (sessionStorage) that persist their base version.
-- Pinning, sidebar/tab reordering, inline rename, Markdown export, and
-  curated bookmark links per page.
+- Every bookmark holds a URL, a title, Markdown notes, a due date, and tags.
+- When you paste a URL, Computer fetches a **live preview** — page title,
+  description, and favicon — so lists are easy to scan.
+- Find things fast: full-text search plus filters by tag, contact, board
+  column, date, or share status. Long lists page smoothly, no matter how
+  many bookmarks you have.
+- Export any bookmark as a Markdown file.
 
-### Collections (Notion-like databases)
-- Owner-scoped collections whose members are **existing bookmarks** —
-  membership never owns, copies, or publishes a bookmark.
-- **Typed properties**: TEXT, NUMBER, SELECT (stable option ids),
-  MULTI_SELECT, DATE (date-only vs datetime modes that never shift across
-  timezones), CHECKBOX, URL. Types are immutable after creation; option
-  removal is refused while items still carry the value. RELATION is
-  schema-reserved but API-rejected pending cross-collection access design.
-- **Saved views** (TABLE, BOARD; CALENDAR/LIST stored, rendering as tables
-  for now) with server-side AND/OR filters over per-type operator
-  allowlists, up to 3 stored sorts (first key drives ordering), grouping,
-  and display settings. Board views group by a SELECT property; a card move
-  is a property edit the table reads back immediately.
-- Keyset pagination with deterministic id tie-break; filter ids and values
-  are bind parameters end to end.
-- **Membership never broadens access**: every surface re-checks bookmark
-  visibility; a revoked share makes items not-found while the membership row
-  survives, so re-sharing restores it. Item counts are authorized counts.
-- Optimistic concurrency on every mutating PATCH (400 missing / 409 stale).
+### Write pages
 
-### Boards, calendar, tags
-- **Global kanban board** with custom columns, card moves, column reordering;
-  deleting a column relocates its cards instead of dropping them.
-- **Calendar**: bookmarks by due date plus shared dates.
-- **Tags**: colored, group-wide sharing (every recipient sees all bookmarks
-  under a shared tag — disclosed in the UI).
+Pages are Markdown documents for the thinking *around* your links — project
+notes, meeting prep, reading lists.
 
-### Sharing and publishing
-- Per-bookmark shares (revocable), tag shares, and **shared dates** that
-  grant read access to what lands on a day.
-- **Public bookmark links** deliberately publish title, description, notes,
-  due date, tags, and preview; the share panel discloses this before the
-  toggle. Public responses exclude owner identity, contacts, recipients,
-  mailbox queries, and alert metadata. Public endpoints are rate-limited
-  per IP.
+- A Notion-style `/` menu inserts headings, to-dos, lists, quotes, and code
+  blocks; typing `[]` + space starts a checkbox.
+- Paste a bare URL and Computer offers to turn it into a nicely titled link
+  (it asks first — it never silently rewrites what you typed).
+- **Your work is protected.** Changes autosave, but if two people (or two
+  tabs) edit the same page, Computer pauses and asks what to do —
+  *Overwrite*, *Save as copy*, or *Discard*. It will never quietly throw
+  away writing.
+- Pin pages, reorder them, rename inline, link bookmarks into them, and
+  export to Markdown.
 
-### Contacts (CardDAV)
-- Sync from Nextcloud (or any CardDAV server): HTTPS required outside test
-  fixtures, redirects never followed, credentials used per-request and never
-  stored. Contacts attach to bookmarks.
+### Build projects with Collections
 
-### Email signals (IMAP watchers)
-- Per-bookmark mailbox watchers (`from`/`subject` filters) over a configured
-  IMAP mailbox; passwords encrypted at rest (AES-GCM, HKDF-SHA256 derived
-  key with transparent legacy rotation).
-- **Checkpointed incremental ingestion**: durable per-source UID checkpoints,
-  bounded 2,500-message passes, monotonic checkpoint saves, UIDVALIDITY
-  resets handled correctly; deduplication by source + Message-ID.
-- Background scheduler with per-user advisory leases, bounded concurrency,
-  exponential backoff, and verified-TLS-only connections; manual "Check now"
-  takes the same lease (409 while held) under a 45-second cap.
-- Per-source `lastStatus` surfacing failures without reporting false
-  success. **Alerts**: bookmarks due within 15 minutes, dismissible.
+Collections are like Notion databases, with one important twist: the rows
+are **your existing bookmarks**, not copies. The same link can live in two
+projects, each with its own properties.
 
-### Quick Find and workspace shell
-- **Ctrl/Cmd+K palette** over pages, bookmarks, tags, and views plus commands
-  (new page, add bookmark, theme toggle), deep-linking into the bookmark
-  detail sheet.
-- Collapsible sidebar with hover actions, breadcrumb top bar, light/dark
-  theme.
+- Add typed columns: text, number, single/multi select, date, checkbox, URL.
+- Save **views** — a table with filters and sorts, or a board grouped by a
+  select column. Dragging a card on the board is just editing a value; the
+  table updates instantly.
+- Filtering and sorting happen on the server, so views stay fast with lots
+  of items.
+- Collections are private to their owner for now, and they never leak
+  access: if someone can't see the underlying bookmark, they can't see it
+  through a collection either.
 
-### Multi-user administration
-- USER/ADMIN roles; **view-as** impersonation that is read-only, audited,
-  eight-hour bounded, and cleared on sign-out.
-- Last-admin invariant: self-demotion refused and demoting the final other
-  admin blocked; role changes are audit-logged.
-- One-shot first-signup admin bootstrap (`adminBootstrap` AppSetting),
-  `ADMIN_EMAILS` reservation for operator provisioning (`make seed`),
-  `ALLOW_BOOTSTRAP_SIGNUP=0` to disable open registration entirely.
-- OIDC/Authelia login endpoints exist as deliberate 501 stubs (client-owned).
+### Track work visually
 
-### Security and operations
-- NextAuth sessions bridged to Go with 60-second HMAC-signed assertions;
-  channel-bound tokens (`typ` claim), token-version revocation, and
-  **global sign-out** across both channels.
-- Per-client-IP rate limiting for login/signup (signed forwarded IP from the
-  trusted Next proxy), consecutive-failure lockout, timing-equalized
-  unknown-email logins, accurate `Retry-After`.
-- Outbound-fetch SSRF guard (`internal/netguard`) blocking
-  private/link-local/CGNAT ranges for previews, CardDAV, and IMAP.
-- All SQL parameterized; dynamic identifiers only from server allowlists.
-- Migration ledger with atomic apply+record under an advisory lock and a
-  schema-convergence check (`make db-converge`) — fresh and upgraded installs
-  can never drift.
-- `PORT`-aware healthchecks, nginx template with HSTS + CSP, `COOKIE_SECURE`
-  auto-detection from `NEXTAUTH_URL`.
+- A **kanban board** over all your bookmarks, with custom columns. Deleting
+  a column moves its cards — nothing is ever lost.
+- A **calendar** showing bookmarks by due date, including dates shared with
+  you by teammates.
+
+### Share deliberately
+
+- Share a single bookmark, a whole tag (everyone with the tag sees its
+  bookmarks — the UI says so up front), or a calendar date.
+- **Public links** publish a bookmark to anyone with the URL. The share
+  panel tells you exactly what becomes public before you flip the switch,
+  and public pages never reveal who owns them.
+- Shared readers always see a trimmed-down version — your contacts, alerts,
+  and email watchers stay private.
+
+### Watch your inbox
+
+This is Computer's most unusual feature. Connect an IMAP mailbox and attach
+**email watchers** to bookmarks: "tell me when mail from this sender, or
+matching this subject, arrives."
+
+- Matching emails become **signals** on the bookmark, deduplicated
+  automatically.
+- Checking is incremental and gentle on your mail server — it remembers
+  where it left off, works in bounded batches, and retries safely after
+  failures.
+- Mailbox passwords are encrypted at rest; connections require proper TLS.
+- **Due-date alerts** surface bookmarks coming due in the next 15 minutes.
+
+### Keep contacts in sync
+
+Sync contacts from Nextcloud (or any CardDAV server) and attach them to
+bookmarks — useful for "the link about the invoice from Acme." Credentials
+are never stored, and sync requires HTTPS.
+
+### Move fast in the UI
+
+- **Ctrl/Cmd+K** opens a quick-find palette: jump to any page, bookmark,
+  tag, or view, or run commands like "new page" and "add bookmark."
+- Collapsible sidebar, breadcrumbs, light/dark themes.
+
+### Administer a multi-user install
+
+- Two roles: USER and ADMIN. Admins can **view as** another user to
+  troubleshoot — strictly read-only, time-boxed to 8 hours, audit-logged,
+  and ended by signing out.
+- Safety rails: you can't demote yourself, and you can't demote the last
+  admin. Role changes are logged.
+- The first signup becomes admin (one-shot, so an empty install can't be
+  hijacked later); registration can be disabled entirely, and admin
+  addresses can be reserved for operator provisioning.
+
+### Security you don't have to think about
+
+A few things baked in, in plain terms:
+
+- **Sessions are short-lived and revocable.** Signing out really signs you
+  out everywhere.
+- **Login is rate-limited per person**, not per server — attackers can't
+  guess passwords at speed, and one bad actor can't lock out your whole
+  team through the proxy.
+- **The server doesn't fetch arbitrary internal addresses** when generating
+  previews or talking to mail/contact servers, closing a common
+  self-hosted-app attack (SSRF).
+- **Database changes are checksummed and atomic** — upgrades can't leave a
+  half-applied schema, and fresh installs provably match upgraded ones.
+- The nginx deployment template ships with HSTS and a Content-Security-Policy.
 
 ---
 
-## Roadmap — next 3–6 months
+## Where we're going next
 
-### Near term (0–3 months): hardening and debt
+### The next 3 months: polish and hardening
 
-Completing the remaining code-review backlog (16 open items, none critical):
+A recent independent code review rated the app free of critical and high
+issues; the remaining items are hardening and cleanup:
 
-- **SSRF guard gaps (SEC-8)**: deny NAT64 (`64:ff9b::/96`), 6to4
-  (`2002::/16`), and IPv4-mapped/embedded forms; recheck embedded IPv4 after
-  resolution; restrict preview to ports 80/443 and IMAP to 143/993.
-- **IMAP check robustness**: return partial matches alongside per-query
-  errors (COR-6); error-handling cleanups — `errors.Is` for sentinels
-  (ERR-1), no `log.Fatalf` inside the server goroutine (ERR-2), cancellable
-  scheduler semaphore (ERR-4).
-- **Input limits and parsing**: explicit length caps on user-supplied text —
-  name, title, url, notes (CQ-3); Markdown export link-target escaping and
-  Unicode-safe slugs (CQ-4); vCard edge cases — preferred EMAIL/TEL, `\N`
-  unescaping, deletion of contacts removed upstream (CQ-5).
-- **Performance**: single-statement kanban column deletion (PERF-2), escaped
-  wildcards + `pg_trgm` GIN index (or tsvector) for page search, scheduler
-  `failures`-map pruning (PERF-3).
-- **Code quality**: load config once and inject it (CQ-1), remove dead
-  models and redundant JSON round-trips (CQ-2), rename the module path to
-  match the repository (CQ-6), transactionalize the last-admin check
-  (SEC-11 follow-up).
-- **Testing and CI**: fail (not skip) DB tests when `CI=true` without
-  `TEST_DATABASE_URL`; unit tests for `markdown`, `kanban`, `parseVCard`;
-  e2e assertion that two browsers' failed logins don't share a lockout
-  (TEST-1); run `make audit` (govulncheck + yarn/npm audit) in the release
-  gate (TEST-2).
-- **Dependencies**: migrate `go-imap` v1 → v2 (unmaintained line); pin
-  `next-auth` to stable when it leaves beta (DEP-5).
+- **Tighten the outbound-fetch guard** against exotic IPv6 forms and
+  restrict which ports previews and IMAP may use.
+- **Cap input sizes** (names, titles, notes, URLs) and improve small
+  parsers: Markdown export escaping, contact (vCard) edge cases.
+- **Speed:** an index-backed page search that treats `%` and `_` literally,
+  a leaner kanban column delete, and memory hygiene in the email scheduler.
+- **Mailbox checks that fail partway** should return what they found
+  instead of nothing.
+- **Testing and CI:** make database tests fail loudly in CI instead of
+  skipping, add unit tests for the Markdown/kanban/vCard code, and run
+  vulnerability scanning on every release check.
+- **Dependencies:** move the IMAP library to its maintained v2 line and pin
+  NextAuth to stable once it leaves beta.
 
-### Mid term (3–6 months): product phases 3–4
+### 3–6 months: connected pages and trust
 
-From the phased Notion-like roadmap (phase-gated: each ships only after the
-previous exit gate passes):
+The product roadmap ships in phases, and each phase only starts once the
+previous one has passed its exit tests.
 
-- **Connected pages (phase 3)**
-  - Page hierarchy (`parentId` with cycle rejection).
-  - Internal links and **backlinks** that never reveal inaccessible titles.
-  - Embedded live collection views inside pages — host page *and* source
-    collection must be authorized; embedding never publishes.
-- **Trust (phase 4)**
-  - Server-side **revision history** for pages (restore creates a new
-    revision).
-  - **Trash / restore** — restored items never resurrect expired grants.
-  - Structured export alongside Markdown.
-  - **Collection sharing**: explicit, disclosed, revocable — designed against
-    the consistent-permissions requirement so membership can never become an
-    access-widening vector. This unlocks the **RELATION** property
-    (cross-collection access checks) afterward.
-- **View depth**
-  - Real CALENDAR and LIST view renderers (currently stored, rendered as
-    tables).
-  - Multi-key server-side sort (all three stored keys, not just the first).
-- **Integrations**
-  - OIDC/Authelia login implementation (replacing the 501 stubs) once the
-    client integration is scheduled.
-  - Alert delivery beyond in-app polling (e.g. email/webhook notifications
-    for due bookmarks and matched signals).
+**Connected pages**
 
-### Deliberate non-goals (unchanged)
+- Nested pages (a real hierarchy, with loops rejected).
+- Internal links and **backlinks** — see which pages mention this one —
+  without ever revealing titles you're not allowed to see.
+- Embed a live collection view inside a page. Embedding follows the same
+  permission rules as everything else: it displays, never publishes.
 
-- No block editor — Markdown-first until block storage, serialization
-  versioning, export, undo, and concurrency are fully specified.
-- No real-time collaboration, formulas, rollups, plugins, or AI-authored
-  mutations.
-- No dynamic cross-workspace collections — membership stays explicit.
+**Trust features**
+
+- Server-side **revision history** for pages, with restore.
+- **Trash and restore** — deleted things come back safely, and restoring
+  never resurrects an expired share.
+- Structured export (beyond per-item Markdown).
+- **Collection sharing** — explicit, disclosed, and revocable. This is the
+  big one: it's deliberately last because sharing must never become a way
+  to widen access by accident. Once it lands, cross-collection **relation
+  properties** can follow.
+
+**Nicer views and notifications**
+
+- Real calendar and list renderers for collection views (today they're
+  stored but displayed as tables).
+- Sorting by all stored sort keys, not just the first.
+- Alerts delivered to you (email or webhook) instead of waiting for you to
+  look at the app.
+- OIDC/Authelia single sign-on for client installs that need it.
+
+### Explicitly not happening (for now)
+
+These are decisions, not oversights:
+
+- **No block editor.** Markdown-first until block storage, undo, export,
+  and concurrency can all be done properly.
+- **No real-time collaboration, formulas, rollups, plugins, or AI-written
+  changes.**
+- **No automatic cross-workspace collections.** Membership stays explicit —
+  a bookmark is in a collection because someone put it there.
