@@ -7,6 +7,44 @@ export const dynamic = 'force-dynamic'
 // oversized or chunked payloads are rejected here instead of being buffered
 // through the Next server first.
 const MAX_BODY_BYTES = 1 << 20
+// Review CR-14: the cap is enforced WHILE streaming — a chunked body without
+// a usable Content-Length is cancelled as soon as it crosses the limit
+// instead of being fully buffered first — and concurrent body readers are
+// bounded, so oversized-upload floods cannot pile up in memory.
+const MAX_CONCURRENT_BODY_READS = 32
+let activeBodyReads = 0
+
+// readBodyLimited returns the buffered body, null when it exceeded the cap
+// (the reader is cancelled promptly), or 'busy' when too many bodies are
+// already being read.
+async function readBodyLimited(request: NextRequest): Promise<ArrayBuffer | null | 'busy'> {
+  if (activeBodyReads >= MAX_CONCURRENT_BODY_READS) return 'busy'
+  activeBodyReads++
+  try {
+    if (!request.body) return new ArrayBuffer(0)
+    const reader = request.body.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => { /* already broken */ })
+        return null
+      }
+      chunks.push(value)
+    }
+    const out = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength }
+    return out.buffer
+  } finally {
+    activeBodyReads--
+  }
+}
+
 async function proxy(request: NextRequest) {
   // NextAuth handles its own explicit /api/auth/* route; this catches all data
   // routes and preserves JSON, Markdown downloads, statuses and view-as cookies.
@@ -44,12 +82,17 @@ async function proxy(request: NextRequest) {
   try {
     let body: ArrayBuffer | undefined
     if (!['GET', 'HEAD'].includes(request.method)) {
-      body = await request.arrayBuffer()
-      // Chunked requests can omit Content-Length; enforce the cap on the
-      // buffered body too.
-      if (body.byteLength > MAX_BODY_BYTES) {
+      // Review CR-14: streamed, counted and cancelled at the limit — an
+      // oversized chunked body without Content-Length never lands fully in
+      // memory before its 413.
+      const limited = await readBodyLimited(request)
+      if (limited === 'busy') {
+        return Response.json({ error: 'Too many concurrent request bodies' }, { status: 429 })
+      }
+      if (limited === null) {
         return Response.json({ error: 'Request body too large' }, { status: 413 })
       }
+      body = limited
     }
     const response = await backendFetch(request.nextUrl.pathname + request.nextUrl.search, {
       method: request.method, headers, body,

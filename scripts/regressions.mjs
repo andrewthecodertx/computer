@@ -20,6 +20,8 @@ let failSignout = false
 // Fails only saves whose body.content matches (deterministic mid-loop
 // failure for the DATA-07 envelope test — no racing the serial queue).
 let failContent = null
+// Mirrors the proxy's streaming body cap (web/app/api/[...path]/route.ts).
+const MAX_PROXY_BODY = 1 << 20
 // Records Authorization headers of POST /api/auth/signout so the browser
 // sign-out test can prove the Next server reached Go's revocation endpoint.
 const signouts = []
@@ -171,6 +173,23 @@ try {
   const login = await context.request.post(`${base}/api/auth/login`, { headers: { Origin: base }, data: { email: 'fixture@computer.test', password: 'password' } })
   assert.equal(login.status(), 200)
   console.log('PASS: forged logins rejected; legitimate login works')
+
+  // Review CR-14: an oversized chunked body (no usable Content-Length) must
+  // be rejected by the proxy's streaming limit — counted while read and
+  // cancelled at the cap, never fully buffered first.
+  const chunkedStatus = await new Promise((resolve) => {
+    const payload = Buffer.alloc(MAX_PROXY_BODY + 1, 0x61)
+    const u = new URL(`${base}/api/pages`)
+    const req = http.request({
+      host: u.hostname, port: u.port, path: u.pathname, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' },
+    }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)) })
+    req.on('error', () => resolve(-1))
+    for (let i = 0; i < payload.length; i += 65536) req.write(payload.subarray(i, Math.min(i + 65536, payload.length)))
+    req.end()
+  })
+  assert.equal(chunkedStatus, 413, 'oversized chunked body was not rejected at the proxy')
+  console.log('PASS: oversized chunked request bodies are rejected while streaming')
 
   const editor = page.getByPlaceholder('Write Markdown notes… type / for blocks, paste links, lists, thoughts.')
   await page.goto(`${base}/pages?id=a`)
