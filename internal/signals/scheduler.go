@@ -102,15 +102,24 @@ func (s *Scheduler) checkUser(ctx context.Context, d *db.DB, id string) {
 	defer conn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtextextended($1,0))`, "signal-poll:"+id)
 	job, cancel := context.WithTimeout(ctx, perUserTimeout)
 	defer cancel()
-	sources, created, e := RunSignalChecks(job, d, id, "")
+	res, e := RunSignalChecks(job, d, id, "")
 	if e != nil {
 		s.note(id, false)
 		log.Printf("watchers: check failed for user %s: %v", id, e)
 		return
 	}
+	if res.Failed > 0 {
+		// Review CR-16: real integration failures (mailbox auth/connection,
+		// search, insert, checkpoint or status writes) must drive backoff —
+		// previously they were recorded per source only and the pass counted
+		// as scheduler success, retrying every tick forever.
+		s.note(id, false)
+		log.Printf("watchers: user %s: %d of %d sources failed", id, res.Failed, res.Sources)
+		return
+	}
 	s.note(id, true)
-	if sources > 0 || created > 0 {
-		log.Printf("watchers: user %s: %d sources checked, %d signals created", id, sources, created)
+	if res.Sources > 0 || res.Created > 0 {
+		log.Printf("watchers: user %s: %d sources checked, %d signals created", id, res.Sources, res.Created)
 	}
 }
 

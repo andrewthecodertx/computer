@@ -62,8 +62,15 @@ func HandleSignalsCreate(w http.ResponseWriter, r *http.Request) {
 		defer conn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtextextended($1,0))`, leaseKey)
 		job, cancel := context.WithTimeout(ctx, 45*time.Second)
 		defer cancel()
-		checked, created, e := signals.RunSignalChecks(job, database(r), user(r), id)
-		respond(w, 200, object{"checked": checked, "created": created}, e)
+		res, e := signals.RunSignalChecks(job, database(r), user(r), id)
+		if e != nil {
+			respond(w, 0, nil, e)
+			return
+		}
+		// Review CR-16: a manual check answers 200 with the structured
+		// per-source outcome (detail lives in each source's lastStatus);
+		// failed sources are counted, not folded into a blanket 500.
+		respond(w, 200, object{"checked": res.Sources, "created": res.Created, "failed": res.Failed}, nil)
 		return
 	}
 	if str(b, "type") != "email" {

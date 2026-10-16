@@ -311,14 +311,26 @@ func LoadMailbox(ctx context.Context, d *db.DB, user string) (Mailbox, error) {
 func PublicSourceTypes() []db.Object {
 	return []db.Object{{"type": "email", "label": "Email (IMAP)", "description": "Search your configured mailbox for matching messages", "stub": false, "configFields": []db.Object{{"key": "from", "label": "From", "placeholder": "sender@domain.com"}, {"key": "subject", "label": "Subject", "placeholder": "Subject contains"}}}}
 }
-func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int, int, error) {
+// CheckResult is the structured outcome of one signal pass (review CR-16).
+// Sources counts the sources considered, Created the signals inserted, and
+// Failed the sources whose check did not complete successfully (mailbox
+// connection/search failure, signal insert failure, checkpoint failure or
+// status-write failure). Per-source detail is persisted on
+// SignalSource.lastStatus for the UI. The returned error is reserved for
+// pass-level infrastructure failures (loading the source list): per-source
+// failures live in Failed so scheduler backoff reacts to real integration
+// failures while a manual check still answers 200 with per-source outcomes.
+type CheckResult struct{ Sources, Created, Failed int }
+
+func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (CheckResult, error) {
+	res := CheckResult{}
 	sources, e := db.Many(ctx, d, `SELECT to_jsonb(s) FROM "SignalSource" s WHERE "ownerId"=$1 AND enabled AND ($2='' OR "bookmarkId"=$2)`, user, bookmark)
 	if e != nil {
-		return 0, 0, e
+		return res, e
 	}
-	created := 0
+	res.Sources = len(sources)
 	if len(sources) == 0 {
-		return 0, 0, nil
+		return res, nil
 	}
 	// Load and connect once for the whole pass; every source of a user shares
 	// the same mailbox credentials.
@@ -332,7 +344,6 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 			defer c.Logout()
 		}
 	}
-	var sourceErrs []error
 	for _, src := range sources {
 		sourceID := fmt.Sprint(src["id"])
 		status := "Checked"
@@ -354,11 +365,14 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 			}
 		}
 		if e != nil {
-			// Connection/search failures are recorded per source (lastStatus),
-			// not aggregated: a manual check must still answer 200 with the
-			// per-source outcome, and db.ErrNotFound from a missing mailbox
-			// configuration would otherwise surface as a misleading 404.
+			// Connection/search failures are recorded per source (lastStatus)
+			// and counted in Failed (review CR-16) — they are NOT folded into
+			// the pass-level error, so a manual check still answers 200 with
+			// the per-source outcome and db.ErrNotFound from a missing
+			// mailbox configuration cannot surface as a misleading 404. The
+			// scheduler reads Failed and backs off on repeated failures.
 			status = "Error: mailbox connection or search failed"
+			res.Failed++
 		} else {
 			var insertErr error
 			for _, s := range events {
@@ -366,13 +380,13 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 				if when.IsZero() {
 					when = time.Now()
 				}
-				res, err := d.ExecContext(ctx, `INSERT INTO "Signal"(id,"sourceType",title,summary,"externalId","occurredAt","sourceId","bookmarkId","ownerId") VALUES($1,'email',$2,$3,$4,$5,$6,$7,$8) ON CONFLICT("sourceId","externalId") DO NOTHING`, db.NewID(), s.Title, s.Summary, s.ExternalID, when, src["id"], src["bookmarkId"], user)
+				r, err := d.ExecContext(ctx, `INSERT INTO "Signal"(id,"sourceType",title,summary,"externalId","occurredAt","sourceId","bookmarkId","ownerId") VALUES($1,'email',$2,$3,$4,$5,$6,$7,$8) ON CONFLICT("sourceId","externalId") DO NOTHING`, db.NewID(), s.Title, s.Summary, s.ExternalID, when, src["id"], src["bookmarkId"], user)
 				if err != nil {
 					insertErr = err
 					break
 				}
-				n, _ := res.RowsAffected()
-				created += int(n)
+				n, _ := r.RowsAffected()
+				res.Created += int(n)
 			}
 			if insertErr != nil {
 				// Review COR-5: record the per-source failure in lastStatus
@@ -381,20 +395,17 @@ func RunSignalChecks(ctx context.Context, d *db.DB, user, bookmark string) (int,
 				// failed event and the rest of the batch are retried next
 				// pass (ON CONFLICT dedupes the ones already inserted).
 				status = "Error: signal insert failed"
-				sourceErrs = append(sourceErrs, fmt.Errorf("source %s insert: %w", sourceID, insertErr))
+				res.Failed++
 			} else if err := SaveCheckpoint(ctx, d, sourceID, next); err != nil {
 				// Advance the checkpoint only after the batch is durably handled.
 				status = "Error: checkpoint save failed"
-				sourceErrs = append(sourceErrs, fmt.Errorf("source %s checkpoint: %w", sourceID, err))
+				res.Failed++
 			}
 		}
 		// Record this source's status even on error so the UI can surface it.
 		if _, err := d.ExecContext(ctx, `UPDATE "SignalSource" SET "lastCheckedAt"=now(),"lastStatus"=$1,"updatedAt"=now() WHERE id=$2`, status, src["id"]); err != nil {
-			sourceErrs = append(sourceErrs, fmt.Errorf("source %s status update: %w", sourceID, err))
+			res.Failed++
 		}
 	}
-	if len(sourceErrs) > 0 {
-		return len(sources), created, errors.Join(sourceErrs...)
-	}
-	return len(sources), created, nil
+	return res, nil
 }

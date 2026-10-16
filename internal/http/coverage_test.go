@@ -274,6 +274,40 @@ func TestSignalSchedulerRunOnce(t *testing.T) {
 	}
 }
 
+// Review CR-16: mailbox failures are scheduler failures. A pass whose mailbox
+// cannot even load must record the per-source status, answer manual checks
+// with the structured outcome (failed count, not a blanket 500), and drive
+// the per-user backoff so the next ticks are skipped.
+func TestSchedulerBacksOffAfterMailboxFailure(t *testing.T) {
+	srv, d := testServerDB(t)
+	alice := newAPIUser(t, srv, "backoff@computer.test")
+	id := alice.request("POST", "/api/bookmarks", map[string]any{"url": "https://example.org/backoff"}, 201)["id"].(string)
+	alice.request("POST", "/api/bookmarks/"+id+"/signals", map[string]any{"type": "email", "config": map[string]any{"subject": "anything"}}, 201)
+	// Deliberately no saved IMAP configuration: every pass fails in LoadMailbox.
+
+	v := alice.request("POST", "/api/bookmarks/"+id+"/signals", map[string]any{"action": "check"}, 200)
+	if v["checked"] != float64(1) || v["failed"] != float64(1) {
+		t.Fatal("manual check did not report the structured failure outcome:", v)
+	}
+	src := func() map[string]any {
+		got := alice.request("GET", "/api/bookmarks/"+id+"/signals", nil, 200)
+		return got["sources"].([]any)[0].(map[string]any)
+	}
+	if status, _ := src()["lastStatus"].(string); !strings.HasPrefix(status, "Error:") {
+		t.Fatal("per-source failure status not recorded:", status)
+	}
+
+	s := signals.NewScheduler()
+	ctx := context.Background()
+	s.RunOnce(ctx, d) // tick 1: runs and fails → failures=1
+	s.RunOnce(ctx, d) // tick 2: 2%2==0 → runs and fails → failures=2
+	after := src()["lastCheckedAt"]
+	s.RunOnce(ctx, d) // tick 3: 3%4!=0 → backoff must skip it
+	if got := src()["lastCheckedAt"]; got != after {
+		t.Fatalf("backoff did not skip tick 3: lastCheckedAt changed %v → %v", after, got)
+	}
+}
+
 // Page saves enforce optimistic concurrency (review DATA-01/DATA-05): a stale
 // base version is rejected with 409 and a missing version with 400, both
 // leaving the row untouched; content saves bump the revision, and metadata
