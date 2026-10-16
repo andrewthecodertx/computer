@@ -196,7 +196,20 @@ func HandleAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		u, e := db.NewUserRepo(db.FromContext(r.Context())).FindByID(r.Context(), su.ID)
-		if e != nil || (su.Ver > 0 && su.Ver != u.TokenVersion) {
+		if e != nil {
+			// Session error classification (review follow-up): distinguish
+			// authentication absence from backend degradation, exactly like
+			// AuthMiddleware — an unreachable database must answer 503 so
+			// client retry logic and monitoring see the difference instead of
+			// a degraded backend masquerading as an ordinary logout.
+			if errors.Is(e, db.ErrNotFound) {
+				writeJSON(w, 200, nil)
+			} else {
+				failure(w, 503, "Service unavailable")
+			}
+			return
+		}
+		if su.Ver > 0 && su.Ver != u.TokenVersion {
 			writeJSON(w, 200, nil)
 			return
 		}
