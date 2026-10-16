@@ -217,8 +217,11 @@ export function PagesClient({ initialId }: { initialId: string | null }) {
     if (!activeId || page?.id !== activeId) return null
     const res = await fetch(`/api/pages/${page.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     if (!res.ok) { toast.error('Could not save page'); return null }
-    const saved = await res.json().catch(() => null)
-    if (saved && typeof saved.version === 'number') autosave.setVersion(page.id, saved.version)
+    // Review CR-17: metadata responses (rename/pin/link changes) carry the
+    // CURRENT content revision but never require or acknowledge a content
+    // base — adopting it here would silently rebase an in-flight stale draft
+    // onto another editor's save and authorize overwriting it. Only content
+    // saves (persistContent) and fresh page loads may move the version map.
     return res
   }
 

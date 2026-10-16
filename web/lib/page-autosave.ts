@@ -132,8 +132,19 @@ export class PageAutosave {
       const content = draft.content
       this.state(id, 'saving')
       try {
-        const version = await this.save(id, content, this.versions.get(id))
-        if (typeof version === 'number') this.versions.set(id, version)
+        // Review CR-17: the expected revision stays bound to the content
+        // snapshot this draft was actually edited from (its baseVersion).
+        // The shared version map can move via other responses; consulting it
+        // here would let a metadata mutation silently rebase a stale draft
+        // onto a newer remote save. The base advances only from an
+        // acknowledged save of this content (below) or an explicit
+        // conflict resolution (resolveOverwrite).
+        const base = draft.baseVersion ?? this.versions.get(id)
+        const version = await this.save(id, content, base)
+        if (typeof version === 'number') {
+          this.versions.set(id, version)
+          draft.baseVersion = version
+        }
       } catch (error) {
         if (error instanceof PageConflictError) {
           // Pause on the reported remote version without adopting it as the
@@ -148,10 +159,6 @@ export class PageAutosave {
         return false
       }
       draft.savedRevision = revision
-      if (draft.baseVersion !== undefined) {
-        const current = this.versions.get(id)
-        if (current !== undefined) draft.baseVersion = current
-      }
       // Review DATA-07: refresh the stored envelope after every successful
       // iteration, not only from edit(). If a later save in this loop fails
       // (or a reload interrupts it), recovery must see the newest content

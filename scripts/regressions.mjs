@@ -270,6 +270,25 @@ try {
   await eventually(() => pages.get('b').content === 'Envelope part two', 'Retry did not persist the recovered draft')
   console.log('PASS: recovery envelope keeps the latest content and refreshed base')
 
+  // Metadata mutations must not rebase a stale draft (review CR-17): a
+  // rename/pin PATCH response carries the CURRENT content revision but never
+  // acknowledges the draft's base. Adopting it would let a stale draft
+  // overwrite newer remote content without any conflict.
+  await page.goto(`${base}/pages?id=a`)
+  await page.getByRole('button', { name: 'Edit', exact: true }).click()
+  await editor.fill('Metadata rebase draft')
+  await eventually(() => pages.get('a').content === 'Metadata rebase draft', 'Draft did not save before the metadata mutation')
+  pages.get('a').content = 'Remote content stays'
+  pages.get('a').version++
+  await page.locator('button[title="Pin to sidebar"]').click()
+  await eventually(() => pages.get('a').pinned === true, 'Pin metadata patch did not land')
+  await editor.fill('Stale draft after metadata patch')
+  await page.getByText('This page was changed elsewhere', { exact: true }).waitFor()
+  assert.equal(pages.get('a').content, 'Remote content stays', 'Metadata response rebased the stale draft over the remote content')
+  await page.getByRole('button', { name: 'Discard my draft and load latest', exact: true }).click()
+  await eventually(() => editor.inputValue().then(value => value === 'Remote content stays'), 'Discard did not load the remote content')
+  console.log('PASS: metadata mutations do not rebase stale content drafts')
+
   await page.goto(`${base}/bookmarks`)
   await eventually(() => page.locator('tbody tr').count().then(n => n === 205), 'Collection truncated at 200')
   assert.ok(paginatedRequests > 0, 'Cursor not forwarded through proxy')

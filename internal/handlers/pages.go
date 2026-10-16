@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"github.com/andrew/go-computer/internal/db"
 	"github.com/andrew/go-computer/internal/markdown"
@@ -9,10 +10,18 @@ import (
 	"time"
 )
 
-func page(r *http.Request, id string) (object, error) {
+// pageView is the canonical page projection over any queryer. HandlePagesUpdate
+// reads it INSIDE the write transaction (review CR-18): a post-commit query
+// could observe another writer's committed revision, and the acknowledgement
+// would then describe state this write did not produce — a client adopting it
+// could overwrite the other writer on its next save.
+func pageView(ctx context.Context, q db.Queryer, id, uid string) (object, error) {
 	// Linked bookmarks use the viewer projection (review PRIV-02): a page can
 	// link bookmarks shared with its owner, and those arrive narrowed.
-	return db.One(r.Context(), database(r), `SELECT to_jsonb(p)||jsonb_build_object('bookmarks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('bookmark',`+db.BookmarkViewerView+`) ORDER BY pb.position) FROM "PageBookmark" pb JOIN "Bookmark" b ON b.id=pb."bookmarkId" WHERE pb."pageId"=p.id AND `+db.BookmarkVisible+`),'[]'::jsonb)) FROM "Page" p WHERE p.id=$1 AND p."ownerId"=$2`, id, user(r))
+	return db.One(ctx, q, `SELECT to_jsonb(p)||jsonb_build_object('bookmarks',COALESCE((SELECT jsonb_agg(to_jsonb(pb)||jsonb_build_object('bookmark',`+db.BookmarkViewerView+`) ORDER BY pb.position) FROM "PageBookmark" pb JOIN "Bookmark" b ON b.id=pb."bookmarkId" WHERE pb."pageId"=p.id AND `+db.BookmarkVisible+`),'[]'::jsonb)) FROM "Page" p WHERE p.id=$1 AND p."ownerId"=$2`, id, uid)
+}
+func page(r *http.Request, id string) (object, error) {
+	return pageView(r.Context(), database(r), id, user(r))
 }
 func HandlePagesList(w http.ResponseWriter, r *http.Request) {
 	// Review PERF-01: the list is a metadata projection — content bodies stay
@@ -122,6 +131,11 @@ func HandlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d["updatedAt"] = time.Now().UTC()
+	// Review CR-18: the response snapshot is captured inside the same
+	// transaction as the write, so the acknowledged revision always
+	// describes exactly the state this request produced — never a later
+	// commit by a competing writer.
+	var v object
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
 		// Same locking discipline as page creation/reorder: serializes
 		// max(position)+1 so concurrent link adds cannot duplicate positions.
@@ -161,13 +175,9 @@ func HandlePagesUpdate(w http.ResponseWriter, r *http.Request) {
 				return e
 			}
 		}
-		return nil
+		v, e = pageView(r.Context(), tx, id, user(r))
+		return e
 	})
-	if e != nil {
-		respond(w, 0, nil, e)
-		return
-	}
-	v, e := page(r, id)
 	respond(w, 200, v, e)
 }
 func HandlePagesDelete(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -357,6 +359,65 @@ func TestPageVersionAndListProjection(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("page missing from list")
+	}
+}
+
+// Review CR-18: a content-save acknowledgement must describe the revision
+// THIS write produced. Concurrent writers racing on the same base: exactly
+// one wins and its response reports base+1 (the snapshot is read inside the
+// write transaction), every loser gets 409 — no acknowledgement can carry a
+// competing writer's committed revision.
+func TestConcurrentPageSaveAckReportsOwnWrite(t *testing.T) {
+	srv := testServer(t)
+	alice := newAPIUser(t, srv, "pageack@computer.test")
+	id := alice.request("POST", "/api/pages", map[string]any{"title": "Ack", "content": "v1"}, 201)["id"].(string)
+
+	const writers = 8
+	type outcome struct {
+		status  int
+		version float64
+	}
+	results := make(chan outcome, writers)
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			body, _ := json.Marshal(map[string]any{"content": fmt.Sprintf("writer-%d", n), "version": 1})
+			rq, _ := http.NewRequest("PATCH", srv.URL+"/api/pages/"+id, bytes.NewReader(body))
+			rq.Header.Set("Content-Type", "application/json")
+			rs, e := alice.c.Do(rq)
+			if e != nil {
+				results <- outcome{status: -1}
+				return
+			}
+			defer rs.Body.Close()
+			raw, _ := io.ReadAll(rs.Body)
+			out := outcome{status: rs.StatusCode}
+			var v map[string]any
+			if json.Unmarshal(raw, &v) == nil {
+				out.version, _ = v["version"].(float64)
+			}
+			results <- out
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	wins := 0
+	for o := range results {
+		switch o.status {
+		case 200:
+			wins++
+			if o.version != 2 {
+				t.Fatalf("winning acknowledgement reported version %v, want exactly base+1 = 2", o.version)
+			}
+		case 409:
+		default:
+			t.Fatalf("concurrent writer got unexpected status %d", o.status)
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("expected exactly one winning writer, got %d", wins)
 	}
 }
 
