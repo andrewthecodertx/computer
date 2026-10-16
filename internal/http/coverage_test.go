@@ -157,7 +157,7 @@ func TestPreviouslyUncoveredRoutes(t *testing.T) {
 
 	// DELETE /api/tags/{id} owner success + BookmarkTag cascade.
 	tag := alice.request("POST", "/api/tags", map[string]any{"name": "DeleteMe"}, 201)["id"].(string)
-	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"tagIds": []string{tag}}, 200)
+	putBookmark(alice, id, map[string]any{"tagIds": []string{tag}}, 200)
 	alice.request("DELETE", "/api/tags/"+tag, nil, 200)
 	if v := alice.request("GET", "/api/bookmarks/"+id, nil, 200); len(v["tags"].([]any)) != 0 {
 		t.Fatal("tag delete did not cascade bookmark_tags")
@@ -418,6 +418,38 @@ func TestConcurrentPageSaveAckReportsOwnWrite(t *testing.T) {
 	}
 	if wins != 1 {
 		t.Fatalf("expected exactly one winning writer, got %d", wins)
+	}
+}
+
+// Review CR-04: bookmark updates enforce optimistic concurrency — a missing
+// version is 400, a stale base is 409 with the row untouched, success bumps
+// the revision, and tag replacement rides the same contract.
+func TestBookmarkVersionContract(t *testing.T) {
+	srv := testServer(t)
+	alice := newAPIUser(t, srv, "bmver@computer.test")
+	created := alice.request("POST", "/api/bookmarks", map[string]any{"url": "https://example.org/ver", "title": "v0"}, 201)
+	id := created["id"].(string)
+	if created["version"].(float64) != 0 {
+		t.Fatalf("new bookmark did not start at version 0: %v", created["version"])
+	}
+	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"title": "no version"}, 400)
+	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"title": "stale", "version": 5}, 409)
+	if v := alice.request("GET", "/api/bookmarks/"+id, nil, 200); v["title"] != "v0" || v["version"].(float64) != 0 {
+		t.Fatalf("rejected writes modified the bookmark: %v", v)
+	}
+	saved := alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"title": "v1", "version": 0}, 200)
+	if saved["version"].(float64) != 1 {
+		t.Fatalf("successful update did not bump the version: %v", saved["version"])
+	}
+	// A second writer holding the same base must not both succeed.
+	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"title": "late", "version": 0}, 409)
+	tag := alice.request("POST", "/api/tags", map[string]any{"name": "versioned"}, 201)["id"].(string)
+	out := alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"tagIds": []string{tag}, "version": 1}, 200)
+	if out["version"].(float64) != 2 {
+		t.Fatalf("tag replacement did not advance the version: %v", out["version"])
+	}
+	if tags, ok := out["tags"].([]any); !ok || len(tags) != 1 {
+		t.Fatalf("tag replacement lost tags: %v", out["tags"])
 	}
 }
 

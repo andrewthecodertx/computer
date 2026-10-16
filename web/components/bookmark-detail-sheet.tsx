@@ -108,12 +108,24 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
           isPublic,
           imapWatchEnabled: imapEnabled,
           imapQuery: imapQuery || null,
+          // Optimistic concurrency (review CR-04): the save carries the
+          // version this form was opened from; a newer edit elsewhere is a
+          // 409 and this draft is NOT lost silently.
+          version: bookmark.version ?? 0,
         }),
       })
       if (res.ok) {
         toast.success('Bookmark updated')
         setEditing(false)
         onUpdate()
+      } else if (res.status === 409) {
+        // Keep the unsaved form exactly as it is; reloading is an explicit
+        // choice so the user can copy anything worth keeping first.
+        toast.error('This bookmark was changed elsewhere and your edits were NOT saved', {
+          description: 'Reload to see the latest version — copy anything you want to keep first.',
+          duration: 12000,
+          action: { label: 'Reload latest', onClick: () => onUpdate() },
+        })
       } else {
         toast.error('Failed to update')
       }

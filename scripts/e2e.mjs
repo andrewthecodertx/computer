@@ -91,7 +91,8 @@ try {
   assert.ok(bookmark?.id, 'UI-created bookmark was not persisted by Go')
   await page.getByText('Browser QA bookmark', { exact: true }).first().click()
   await page.getByRole('link', { name: 'Download Markdown', exact: true }).waitFor()
-  const update = await json(await context.request.put(`${base}/api/bookmarks/${bookmark.id}`, { data: { notes: '# Browser verified', isPublic: true } }))
+  // Optimistic concurrency (review CR-04): the PUT carries the version it edited from.
+  const update = await json(await context.request.put(`${base}/api/bookmarks/${bookmark.id}`, { data: { notes: '# Browser verified', isPublic: true, version: bookmark.version } }))
   assert.equal(update.notes, '# Browser verified')
   // Notion-style Quick Find (Cmd/Ctrl+K): open, dismiss, then jump straight
   // to this bookmark's detail sheet through the ?open= deep link.
@@ -130,7 +131,7 @@ try {
   const columns = await json(await context.request.get(`${base}/api/kanban/columns`))
   assert.equal(columns.length, 4)
   const custom = await json(await context.request.post(`${base}/api/kanban/columns`, { data: { label: 'QA done' } }), 201)
-  await json(await context.request.put(`${base}/api/bookmarks/${bookmark.id}`, { data: { kanbanColumnId: custom.id } }))
+  await json(await context.request.put(`${base}/api/bookmarks/${bookmark.id}`, { data: { kanbanColumnId: custom.id, version: update.version } }))
   const moved = await json(await context.request.delete(`${base}/api/kanban/columns/${custom.id}`))
   assert.equal(moved.moved, 1)
   await page.goto(`${base}/pages`)

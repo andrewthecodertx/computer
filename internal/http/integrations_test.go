@@ -92,7 +92,7 @@ END:VCARD</card:address-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:pr
 	if len(v["signals"].([]any)) != 1 {
 		t.Fatal("IMAP envelope fetch")
 	}
-	a.request("PUT", "/api/bookmarks/"+id, map[string]any{"imapWatchEnabled": true}, 200)
+	putBookmark(a, id, map[string]any{"imapWatchEnabled": true}, 200)
 	v = a.request("GET", "/api/imap/check", nil, 200)
 	if len(v["matches"].([]any)) != 1 {
 		t.Fatal("legacy mailbox watch")

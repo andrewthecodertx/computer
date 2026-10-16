@@ -45,14 +45,30 @@ export function KanbanClient() {
   useEffect(() => { const timer = setTimeout(load, 0); window.addEventListener('computer:bookmarks-changed', load); return () => { clearTimeout(timer); window.removeEventListener('computer:bookmarks-changed', load) } }, [load])
 
   const moveToColumn = useCallback(async (bookmarkId: string, columnId: string) => {
+    const current = bookmarks.find(b => b.id === bookmarkId)
     setBookmarks(prev => prev.map(b => b.id === bookmarkId ? ({ ...b, kanbanColumnId: columnId } as any) : b))
     try {
       const res = await fetch(`/api/bookmarks/${bookmarkId}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kanbanColumnId: columnId }),
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        // Optimistic concurrency (review CR-04): the move carries the card's
+        // version; a card edited or moved elsewhere is a 409, and the board
+        // reloads the true state instead of silently clobbering it.
+        body: JSON.stringify({ kanbanColumnId: columnId, version: current?.version ?? 0 }),
       })
+      if (res.status === 409) {
+        toast.error('This bookmark was changed elsewhere — the board reloaded without your move')
+        load()
+        return
+      }
       if (!res.ok) throw new Error(await res.text())
+      const saved = await res.json().catch(() => null)
+      // Track the server revision so the next move sends a fresh base (the
+      // column-deletion move bumps it server-side too).
+      if (saved && typeof saved.version === 'number') {
+        setBookmarks(prev => prev.map(b => b.id === bookmarkId ? ({ ...b, version: saved.version } as any) : b))
+      }
     } catch (e) { console.error(e); toast.error('Failed to move'); load() }
-  }, [load])
+  }, [bookmarks, load])
 
   const addColumn = async () => {
     if (!newLabel.trim()) return

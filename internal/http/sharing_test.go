@@ -63,6 +63,6 @@ func TestRevocationAndForeignRelations(t *testing.T) {
 	a.request("DELETE", "/api/shared-dates/"+dates[0]["id"].(string), nil, 200)
 	b.request("GET", "/api/bookmarks/"+id, nil, 404)
 	foreign := b.request("POST", "/api/kanban/columns", map[string]any{"label": "Private"}, 201)["id"].(string)
-	a.request("PUT", "/api/bookmarks/"+id, map[string]any{"kanbanColumnId": foreign}, 400)
-	a.request("PUT", "/api/bookmarks/"+id, map[string]any{"dueDate": map[string]any{}}, 400)
+	putBookmark(a, id, map[string]any{"kanbanColumnId": foreign}, 400)
+	putBookmark(a, id, map[string]any{"dueDate": map[string]any{}}, 400)
 }

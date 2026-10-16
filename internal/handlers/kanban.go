@@ -138,7 +138,12 @@ func HandleKanbanColumnsDelete(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(moveIDs) > 0 {
-			if _, e := tx.ExecContext(r.Context(), `UPDATE "Bookmark" SET "kanbanColumnId"=$1,"updatedAt"=now() WHERE id=ANY($2::text[])`, dest, moveIDs); e != nil {
+			// The move is a mutation covered by the bookmark concurrency
+			// contract (review CR-04): bumping version turns any client
+			// snapshot that still shows the old column into a 409 on its
+			// next save instead of letting it silently move the bookmark
+			// back.
+			if _, e := tx.ExecContext(r.Context(), `UPDATE "Bookmark" SET "kanbanColumnId"=$1,version=version+1,"updatedAt"=now() WHERE id=ANY($2::text[])`, dest, moveIDs); e != nil {
 				return e
 			}
 			moved = len(moveIDs)

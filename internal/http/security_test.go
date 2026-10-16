@@ -139,7 +139,7 @@ func TestPublicBookmarksDoNotExposePrivateMetadata(t *testing.T) {
 			t.Errorf("shared list response includes %s", key)
 		}
 	}
-	owner.request("PUT", "/api/bookmarks/"+id, map[string]any{"isPublic": false}, 200)
+	putBookmark(owner, id, map[string]any{"isPublic": false}, 200)
 	viewer.request("GET", "/api/public/bookmarks/"+id, nil, 404)
 }
 

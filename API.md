@@ -60,7 +60,7 @@ limited to the effective user's pages.
 | GET | `/api/bookmarks` | Array, newest-updated then ID descending; query `search,tagId,contactId,kanban,date,shared,limit,cursor`; default/max page size 200 |
 | POST | `/api/bookmarks` | 201 bookmark; body `{url,title?,description?,notes?,dueDate?,alertAt?,kanbanStatus?,contactId?,tagIds?,isPublic?,imapWatchEnabled?,imapQuery?}` |
 | GET | `/api/bookmarks/{id}` | Owner-full or shared-reader projection if visible; public-only access uses the redacted public endpoint |
-| PUT | `/api/bookmarks/{id}` | Updated bookmark, owner only; fields above plus `kanbanColumnId`; omitted fields stay unchanged; nullable fields can be cleared |
+| PUT | `/api/bookmarks/{id}` | Updated bookmark, owner only; fields above plus `kanbanColumnId`; omitted fields stay unchanged; nullable fields can be cleared. **Requires `version`** (the revision the client edited from): 400 when missing, 409 when stale — success bumps `version` (review CR-04) |
 | DELETE | `/api/bookmarks/{id}` | `{ok:true}`, owner only |
 | POST | `/api/bookmarks/{id}/share` | `{ok:true}`; body `{userIds?,isPublic?}`; adds shares |
 | DELETE | `/api/bookmarks/{id}/share/{userId}` | `{ok:true}`; revokes that direct share |
@@ -77,6 +77,11 @@ identity, contacts, share recipients, mailbox queries, and alert metadata are
 excluded.
 Updating `alertAt` resets `alertSent`; replacing `tagIds` is transactional.
 Tags, columns and contacts are checked for accessibility/ownership.
+The `version` contract covers the owner-driven PUT (fields and tag
+replacement): kanban column deletion moves bookmarks server-side and bumps
+their `version` too, so a stale board save 409s instead of moving a card
+back into a deleted column. Sharing (`POST /share`) and the server-driven
+`alertSent` flag are deliberately outside the contract (review CR-04).
 
 ## Tags, kanban and pages
 

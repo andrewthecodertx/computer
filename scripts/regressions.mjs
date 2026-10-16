@@ -10,7 +10,7 @@ const tags = [{ id: 'one', name: 'First tag', color: '#123456' }, { id: 'two', n
 const bookmarks = Array.from({ length: 205 }, (_, i) => ({
   id: `bookmark-${i}`, ownerId: 'fixture-user', title: `Fixture ${String(i).padStart(3, '0')}`, url: 'https://127.0.0.1/test',
   description: '', notes: '', tags: [{ tag: tags[0] }], sharedWith: [], kanbanStatus: 'INBOX',
-  isPublic: false, imapWatchEnabled: false, alertAt: null, dueDate: null, createdAt: '2026-10-07T00:00:00Z', updatedAt: '2026-10-07T00:00:00Z',
+  isPublic: false, imapWatchEnabled: false, alertAt: null, dueDate: null, version: 0, createdAt: '2026-10-07T00:00:00Z', updatedAt: '2026-10-07T00:00:00Z',
 }))
 let failSaves = false
 // Review CR-02: forces Go's signout endpoint to fail so the browser test can
@@ -84,9 +84,23 @@ const api = http.createServer(async (req, res) => {
     else if (/^\/api\/bookmarks\/[^/]+$/.test(url.pathname)) {
       const bookmark = bookmarks.find(b => b.id === url.pathname.split('/')[3])
       if (req.method === 'PUT') {
-        const { tagIds, ...data } = body
+        // Review CR-04: mirror Go's bookmark concurrency contract — version
+        // is required (400), a stale base is 409 with the row untouched,
+        // success bumps the revision.
+        if (body.version === undefined) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end('{"error":"version is required when updating a bookmark; refetch it and retry"}')
+          return
+        }
+        if (body.version !== bookmark.version) {
+          res.writeHead(409, { 'Content-Type': 'application/json' })
+          res.end('{"error":"Bookmark was modified elsewhere; reload to see the latest version"}')
+          return
+        }
+        const { tagIds, version, ...data } = body
         Object.assign(bookmark, data)
         if (tagIds) bookmark.tags = tagIds.map(id => ({ tag: tags.find(tag => tag.id === id) }))
+        bookmark.version++
       }
       result = bookmark
     } else if (url.pathname.endsWith('/signals')) result = { sources: [], signals: [], types: [] }
@@ -302,18 +316,34 @@ try {
   assert.ok(paginatedRequests > 0, 'Cursor not forwarded through proxy')
   await page.getByText('Fixture 000', { exact: true }).click()
   const sheet = page.getByRole('dialog')
-  await sheet.getByLabel('URL', { exact: true }).fill('https://127.0.0.1/changed')
-  await sheet.getByLabel('Description', { exact: true }).fill('Edited description')
-  await sheet.getByLabel('First tag', { exact: true }).uncheck()
-  await sheet.getByLabel('Second tag', { exact: true }).check()
-  await sheet.locator('input[type="datetime-local"]').fill('2026-10-08T10:30')
+  const fillSheet = async () => {
+    await sheet.getByLabel('URL', { exact: true }).fill('https://127.0.0.1/changed')
+    await sheet.getByLabel('Description', { exact: true }).fill('Edited description')
+    await sheet.getByLabel('First tag', { exact: true }).uncheck()
+    await sheet.getByLabel('Second tag', { exact: true }).check()
+    await sheet.locator('input[type="datetime-local"]').fill('2026-10-08T10:30')
+  }
+  await fillSheet()
+  // Review CR-04: a concurrent edit elsewhere bumps the revision while this
+  // form is open. The save must surface a conflict, preserve the unsaved
+  // draft, and leave the remote state untouched — no silent overwrite.
+  bookmarks[0].version++
+  bookmarks[0].notes = 'Remote edit wins'
   await sheet.getByRole('button', { name: 'Save Changes', exact: true }).click()
-  await eventually(() => bookmarks[0].url === 'https://127.0.0.1/changed', 'Bookmark update missing')
+  await page.getByText('your edits were NOT saved', { exact: false }).first().waitFor()
+  assert.equal(bookmarks[0].url, 'https://127.0.0.1/test', 'Stale bookmark save overwrote the remote state')
+  assert.equal(bookmarks[0].notes, 'Remote edit wins', 'Stale bookmark save clobbered the remote notes')
+  await page.getByRole('button', { name: 'Reload latest', exact: true }).click()
+  await eventually(() => sheet.getByLabel('URL', { exact: true }).inputValue().then(v => v === 'https://127.0.0.1/test'), 'Sheet did not reload the latest version')
+  await fillSheet()
+  await sheet.getByRole('button', { name: 'Save Changes', exact: true }).click()
+  await eventually(() => bookmarks[0].url === 'https://127.0.0.1/changed', 'Bookmark update missing after conflict resolution')
   assert.equal(bookmarks[0].description, 'Edited description')
   assert.deepEqual(bookmarks[0].tags.map(({ tag }) => tag.id), ['two'])
   assert.equal(bookmarks[0].alertAt, '2026-10-08T15:30:00.000Z')
+  assert.equal(bookmarks[0].notes, 'Remote edit wins', 'Conflict resolution lost the remote notes')
   assert.deepEqual(errors, [], 'Browser runtime errors')
-  console.log('PASS: 205 bookmarks displayed; URL/description/tags editable; local alert time converted to UTC')
+  console.log('PASS: 205 bookmarks displayed; stale saves conflict visibly; URL/description/tags editable; local alert time converted to UTC')
 
   // Revocation failure path (review CR-02): when Go's revocation fails, the
   // local sign-out still completes, but the UI must say so — local cookie

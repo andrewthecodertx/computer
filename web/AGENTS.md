@@ -17,6 +17,10 @@
   narrowed projection without contact, recipient list, alerts, mailbox
   watches or board placement — UI code must keep treating those fields as
   optional (see the `Bookmark` type in `components/app-shell.tsx`).
+  Owner-driven `PUT /api/bookmarks/{id}` sends the expected `version`
+  (review CR-04): the detail sheet surfaces a 409 as a conflict that keeps
+  the unsaved form until the user explicitly reloads, and kanban moves
+  reload the board on 409. Column deletion bumps versions server-side.
 - Collections workspace (`app/(app)/collections/client.tsx`): membership is
   contextual and never grants access — revoked bookmarks vanish from item
   surfaces, so never assume an item implies visibility. Every mutating PATCH

@@ -108,7 +108,7 @@ func TestCollectionsLifecycle(t *testing.T) {
 	item2 := alice.request("POST", "/api/collections/"+cid2+"/items", map[string]any{
 		"bookmarkId": bm1, "propertyValues": map[string]any{status2["id"].(string): unread},
 	}, 201)
-	alice.request("PUT", "/api/bookmarks/"+bm1, map[string]any{"title": "Renamed intrinsically"}, 200)
+	putBookmark(alice, bm1, map[string]any{"title": "Renamed intrinsically"}, 200)
 	for _, pair := range [][2]string{{cid, itemID}, {cid2, item2["id"].(string)}} {
 		got := alice.getJSON("/api/collections/"+pair[0]+"/items", 200)
 		found := false

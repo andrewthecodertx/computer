@@ -278,6 +278,27 @@ func HandleBookmarksUpdate(w http.ResponseWriter, r *http.Request) {
 		respond(w, 0, nil, e)
 		return
 	}
+	// Optimistic concurrency (review CR-04): the PUT is the owner-driven
+	// mutation surface (fields AND tag replacement), and concurrency is not
+	// optional on it — the same DATA-05 rule pages enforce. The client sends
+	// the version it edited from; a stale base is a 409 and the row is left
+	// untouched, so overlapping edits can no longer silently overwrite each
+	// other. Sharing (POST /share) and server-driven flags (alertSent) are
+	// deliberately outside this contract; the kanban column-deletion move
+	// bumps the version itself.
+	baseVersion, hasVersion := 0, false
+	if v, present := b["version"]; present {
+		f, isNum := v.(float64)
+		if !isNum || f < 0 || f != float64(int64(f)) {
+			respond(w, 0, nil, bad("version must be a non-negative integer"))
+			return
+		}
+		baseVersion, hasVersion = int(f), true
+	}
+	if !hasVersion {
+		respond(w, 0, nil, bad("version is required when updating a bookmark; refetch it and retry"))
+		return
+	}
 	tags, e := ids(b, "tagIds")
 	if e != nil {
 		respond(w, 0, nil, e)
@@ -287,6 +308,7 @@ func HandleBookmarksUpdate(w http.ResponseWriter, r *http.Request) {
 		addPreview(r.Context(), previewKey(r), d, false)
 	}
 	d["updatedAt"] = time.Now().UTC()
+	d["version"] = baseVersion + 1
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
 		// Review CR-05: same board-mutation locking protocol as create and
 		// column deletion — placement is validated (checkRelations) and
@@ -294,6 +316,15 @@ func HandleBookmarksUpdate(w http.ResponseWriter, r *http.Request) {
 		// this assignment nor move a bookmark this write just placed.
 		if e := lockUser(r, tx); e != nil {
 			return e
+		}
+		// Re-read under the lock: the version check must see the latest
+		// committed state, not the pre-transaction snapshot.
+		cur, e := owned(r, tx, "Bookmark", id, "ownerId")
+		if e != nil {
+			return e
+		}
+		if stored, _ := cur["version"].(float64); int(stored) != baseVersion {
+			return conflict("Bookmark was modified elsewhere; reload to see the latest version")
 		}
 		if e := checkRelations(r, tx, d, tags); e != nil {
 			return e

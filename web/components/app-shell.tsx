@@ -30,6 +30,9 @@ export type Bookmark = {
   isPublic: boolean
   ownerId: string
   contactId?: string | null
+  // Optimistic concurrency revision (review CR-04): every owner-driven PUT
+  // must send the version it edited from; 409 means a newer edit exists.
+  version?: number
   contact?: any | null
   tags: { tag: { id: string; name: string; color: string; ownerId?: string } }[]
   sharedWith?: any[]

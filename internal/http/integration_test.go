@@ -111,6 +111,16 @@ func meID(c apiClient) string {
 	c.t.Helper()
 	return c.request("GET", "/api/me", nil, 200)["user"].(map[string]any)["id"].(string)
 }
+
+// putBookmark sends PUT /api/bookmarks/{id} with the bookmark's CURRENT
+// version attached (review CR-04: the concurrency contract requires it).
+func putBookmark(c apiClient, id string, body map[string]any, status int) map[string]any {
+	c.t.Helper()
+	cur := c.request("GET", "/api/bookmarks/"+id, nil, 200)
+	v, _ := cur["version"].(float64)
+	body["version"] = int(v)
+	return c.request("PUT", "/api/bookmarks/"+id, body, status)
+}
 func TestApplicationFlows(t *testing.T) {
 	srv := testServer(t)
 	newClient := func() apiClient { jar, _ := cookiejar.New(nil); return apiClient{t, &http.Client{Jar: jar}, srv.URL} }
@@ -140,11 +150,11 @@ func TestApplicationFlows(t *testing.T) {
 	id := b["id"].(string)
 	bob.request("GET", "/api/bookmarks/"+id, nil, 404)
 	bob.request("PUT", "/api/bookmarks/"+id, map[string]any{"notes": "attack"}, 404)
-	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"dueDate": nil, "isPublic": false}, 200)
+	putBookmark(alice, id, map[string]any{"dueDate": nil, "isPublic": false}, 200)
 	if v := alice.request("GET", "/api/bookmarks/"+id, nil, 200); v["title"] != "Original" || v["dueDate"] != nil {
 		t.Fatal("partial/null update broken")
 	}
-	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"tagIds": []string{"missing"}}, 400)
+	putBookmark(alice, id, map[string]any{"tagIds": []string{"missing"}}, 400)
 	v := alice.request("GET", "/api/bookmarks/"+id, nil, 200)
 	if len(v["tags"].([]any)) != 1 {
 		t.Fatal("failed update lost tags")
@@ -165,7 +175,7 @@ func TestApplicationFlows(t *testing.T) {
 	bob.request("GET", "/api/pages/"+page+"/markdown", nil, 200)
 	alice.request("GET", "/api/kanban/columns", nil, 200)
 	col := alice.request("POST", "/api/kanban/columns", map[string]any{"label": "Custom"}, 201)["id"].(string)
-	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"kanbanColumnId": col}, 200)
+	putBookmark(alice, id, map[string]any{"kanbanColumnId": col}, 200)
 	v = alice.request("DELETE", "/api/kanban/columns/"+col, nil, 200)
 	if v["moved"] != float64(1) {
 		t.Fatal("deleted column did not move card")
@@ -178,7 +188,7 @@ func TestApplicationFlows(t *testing.T) {
 	if v["alertSent"] != true {
 		t.Fatal("alert dismissal")
 	}
-	alice.request("PUT", "/api/bookmarks/"+id, map[string]any{"alertAt": "2000-01-02"}, 200)
+	putBookmark(alice, id, map[string]any{"alertAt": "2000-01-02"}, 200)
 	source := alice.request("POST", "/api/bookmarks/"+id+"/signals", map[string]any{"type": "email", "config": map[string]any{"from": "sender@computer.test"}}, 201)["id"].(string)
 	alice.request("POST", "/api/bookmarks/"+id+"/signals", map[string]any{"action": "check"}, 200)
 	alice.request("PATCH", "/api/signal-sources/"+source, map[string]any{"enabled": false}, 200)

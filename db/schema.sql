@@ -76,6 +76,11 @@ CREATE TABLE "Bookmark" (
   "isPublic" boolean NOT NULL DEFAULT false,
   "ownerId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   "contactId" text,
+  -- Optimistic concurrency revision (review CR-04): every owner-driven PUT
+  -- (fields and tag replacement) requires the expected version and bumps it;
+  -- the column-deletion move bumps it too. Sharing and server-driven flags
+  -- (alertSent) are outside the contract — see API.md.
+  version integer NOT NULL DEFAULT 0,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
