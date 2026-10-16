@@ -349,10 +349,11 @@ try {
   bookmarks[0].version++
   bookmarks[0].notes = 'Remote edit wins'
   await sheet.getByRole('button', { name: 'Save Changes', exact: true }).click()
-  await page.getByText('your edits were NOT saved', { exact: false }).first().waitFor()
+  await page.getByText('This bookmark was changed elsewhere', { exact: false }).first().waitFor()
   assert.equal(bookmarks[0].url, 'https://127.0.0.1/test', 'Stale bookmark save overwrote the remote state')
   assert.equal(bookmarks[0].notes, 'Remote edit wins', 'Stale bookmark save clobbered the remote notes')
-  await page.getByRole('button', { name: 'Reload latest', exact: true }).click()
+  // The sheet keeps the unsaved draft and offers an explicit resolution.
+  await sheet.getByRole('button', { name: 'Load latest version', exact: true }).click()
   await eventually(() => sheet.getByLabel('URL', { exact: true }).inputValue().then(v => v === 'https://127.0.0.1/test'), 'Sheet did not reload the latest version')
   await fillSheet()
   await sheet.getByRole('button', { name: 'Save Changes', exact: true }).click()

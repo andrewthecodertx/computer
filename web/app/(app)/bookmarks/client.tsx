@@ -16,6 +16,19 @@ export function BookmarksClient({ initialSearch = null, initialOpen = null }: { 
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Bookmark | null>(null)
+  // Review CR-04: the sheet must receive the CURRENT row after mutations —
+  // its conflict banner ("Load latest version") and successful saves need
+  // the fresh version, or the next save would send a stale base.
+  const selectedRef = useRef<Bookmark | null>(null)
+  selectedRef.current = selected
+  const refreshSelected = useCallback(async () => {
+    const id = selectedRef.current?.id
+    if (!id) return
+    try {
+      const res = await fetch(`/api/bookmarks/${encodeURIComponent(id)}`, { cache: 'no-store' })
+      if (res.ok) setSelected(await res.json())
+    } catch { /* the list load surfaces errors */ }
+  }, [])
   const [tab, setTab] = useState<'mine' | 'shared'>('mine')
   const [sortField, setSortField] = useState<'title' | 'updatedAt' | 'kanbanStatus'>('updatedAt')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -173,7 +186,7 @@ export function BookmarksClient({ initialSearch = null, initialOpen = null }: { 
           </table>
         </div>
       </div>
-      <BookmarkDetailSheet bookmark={selected} onClose={() => setSelected(null)} onUpdate={load} />
+      <BookmarkDetailSheet bookmark={selected} onClose={() => setSelected(null)} onUpdate={() => { load(); void refreshSelected() }} />
     </div>
   )
 }

@@ -43,6 +43,10 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
   const [description, setDescription] = useState('')
   const [tagIds, setTagIds] = useState<string[]>([])
   const [allTags, setAllTags] = useState<{ id: string; name: string; color: string; ownerId?: string }[]>([])
+  // Review CR-04: set when a save hit a 409. The form keeps the unsaved
+  // draft; the banner is the explicit, persistent resolution path (a toast
+  // action alone would sit under the sheet's stacking context and vanish).
+  const [conflict, setConflict] = useState(false)
   const canEdit = !!bookmark && effectiveId === bookmark.ownerId
   useEffect(() => {
     if (!bookmark) return
@@ -82,6 +86,9 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
       setUrl(bookmark.url)
       setDescription(bookmark.description || '')
       setTagIds(bookmark.tags.map(({ tag }) => tag.id))
+      // A refreshed bookmark prop (after an explicit reload) clears the
+      // conflict state along with the form.
+      setConflict(false)
       }, 0)
       return () => clearTimeout(timer)
     }
@@ -117,15 +124,15 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
       if (res.ok) {
         toast.success('Bookmark updated')
         setEditing(false)
+        setConflict(false)
         onUpdate()
       } else if (res.status === 409) {
-        // Keep the unsaved form exactly as it is; reloading is an explicit
-        // choice so the user can copy anything worth keeping first.
-        toast.error('This bookmark was changed elsewhere and your edits were NOT saved', {
-          description: 'Reload to see the latest version — copy anything you want to keep first.',
-          duration: 12000,
-          action: { label: 'Reload latest', onClick: () => onUpdate() },
-        })
+        // Review CR-04: keep the unsaved form exactly as it is; the inline
+        // conflict banner below is the explicit resolution path. Reloading
+        // is a deliberate user choice so anything worth keeping can be
+        // copied first.
+        setConflict(true)
+        toast.error('This bookmark was changed elsewhere — your edits were NOT saved')
       } else {
         toast.error('Failed to update')
       }
@@ -356,6 +363,16 @@ export function BookmarkDetailSheet({ bookmark, onClose, onUpdate }: Props) {
 
           {/* Actions */}
           </fieldset>
+          {conflict && canEdit && (
+            <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm space-y-2">
+              <p className="font-medium text-destructive">This bookmark was changed elsewhere</p>
+              <p className="text-muted-foreground">
+                Your edits are kept in this form but were NOT saved — saving again would overwrite the
+                newer version. Copy anything you want to keep, then load the latest version.
+              </p>
+              <Button size="sm" variant="outline" onClick={() => onUpdate()}>Load latest version</Button>
+            </div>
+          )}
           {bookmark && <BookmarkExtras bookmark={bookmark} canEdit={canEdit} onUpdate={onUpdate} />}
           {!canEdit && <p className="text-xs text-muted-foreground">Shared bookmark — read only</p>}
           {canEdit &&

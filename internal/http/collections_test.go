@@ -381,36 +381,40 @@ func TestCollectionIndirectMutationsAdvanceVersions(t *testing.T) {
 		return -1
 	}
 
+	// Baselines: collection entities start at version 1 (migration 002).
+	base1, base2 := itemVersion(id1), itemVersion(id2)
+	fv0, dv0 := viewVersion(fvid), viewVersion(dvid)
+
 	// Reorder advances every affected item's revision...
 	alice.request("PUT", "/api/collections/"+cid+"/items", map[string]any{"order": []string{id2, id1}}, 200)
-	if v := itemVersion(id1); v != 1 {
-		t.Fatalf("reorder left item1 at version %d, want 1", v)
+	if v := itemVersion(id1); v != base1+1 {
+		t.Fatalf("reorder left item1 at version %d, want %d", v, base1+1)
 	}
-	if v := itemVersion(id2); v != 1 {
-		t.Fatalf("reorder left item2 at version %d, want 1", v)
+	if v := itemVersion(id2); v != base2+1 {
+		t.Fatalf("reorder left item2 at version %d, want %d", v, base2+1)
 	}
 	// ...so a PATCH based on the pre-reorder snapshot is a 409, and the
 	// current base still succeeds.
-	alice.request("PATCH", "/api/collections/"+cid+"/items/"+id1, map[string]any{"position": 0, "version": 0}, 409)
-	alice.request("PATCH", "/api/collections/"+cid+"/items/"+id1, map[string]any{"position": 0, "version": 1}, 200)
-	if v := itemVersion(id1); v != 2 {
-		t.Fatalf("PATCH did not advance item1 to version 2: %d", v)
+	alice.request("PATCH", "/api/collections/"+cid+"/items/"+id1, map[string]any{"position": 0, "version": base1}, 409)
+	alice.request("PATCH", "/api/collections/"+cid+"/items/"+id1, map[string]any{"position": 0, "version": base1 + 1}, 200)
+	if v := itemVersion(id1); v != base1+2 {
+		t.Fatalf("PATCH did not advance item1 to version %d: %d", base1+2, v)
 	}
 
 	// Property deletion: the item carrying a value advances; the item without
 	// one does not. The view filtering on the property advances (and its
 	// clause is scrubbed); the untouched default view keeps its revision.
 	alice.request("DELETE", "/api/collections/"+cid+"/properties/"+pid, nil, 200)
-	if v := itemVersion(id1); v != 3 {
-		t.Fatalf("property deletion left valued item1 at version %d, want 3", v)
+	if v := itemVersion(id1); v != base1+3 {
+		t.Fatalf("property deletion left valued item1 at version %d, want %d", v, base1+3)
 	}
-	if v := itemVersion(id2); v != 1 {
-		t.Fatalf("property deletion bumped valueless item2 to %d, want 1", v)
+	if v := itemVersion(id2); v != base2+1 {
+		t.Fatalf("property deletion bumped valueless item2 to %d, want %d", v, base2+1)
 	}
-	if v := viewVersion(fvid); v != 1 {
-		t.Fatalf("property deletion left the filtered view at version %d, want 1", v)
+	if v := viewVersion(fvid); v != fv0+1 {
+		t.Fatalf("property deletion left the filtered view at version %d, want %d", v, fv0+1)
 	}
-	if v := viewVersion(dvid); v != 0 {
-		t.Fatalf("property deletion bumped the untouched default view to %d, want 0", v)
+	if v := viewVersion(dvid); v != dv0 {
+		t.Fatalf("property deletion bumped the untouched default view to %d, want %d", v, dv0)
 	}
 }
