@@ -103,6 +103,25 @@ type davResponse struct {
 	} `xml:"response"`
 }
 
+// resolveCardDAVTarget resolves the user-supplied cardDavPath against the
+// configured base URL and revalidates the COMPLETE resolved destination
+// (review CR-01): a same-host absolute path like "http://host/..." must not
+// downgrade an https base, because Basic-auth credentials are attached to the
+// resulting request. The resolved URL must keep the base's scheme and host
+// and carry no embedded userinfo. The scheme check on the base URL itself
+// (https unless the netguard fixture flag is set) happens at the caller, so
+// pinning the resolved scheme to the base scheme enforces https end to end.
+func resolveCardDAVTarget(base *url.URL, path string) (*url.URL, error) {
+	target, e := base.Parse(path)
+	if e != nil {
+		return nil, bad("Invalid CardDAV path")
+	}
+	if target.Host != base.Host || target.Scheme != base.Scheme || target.User != nil {
+		return nil, bad("CardDAV path must stay on the Nextcloud host and scheme")
+	}
+	return target, nil
+}
+
 func HandleContactsSync(w http.ResponseWriter, r *http.Request) {
 	b, ok := read(w, r)
 	if !ok {
@@ -118,7 +137,9 @@ func HandleContactsSync(w http.ResponseWriter, r *http.Request) {
 	// set (loopback test fakes / deliberate LAN deployments — never
 	// production Compose). Redirects are not followed at all
 	// (ErrUseLastResponse), so a verified origin cannot be downgraded, and
-	// the path join below is pinned to the same host.
+	// the path resolution below is pinned to the same host AND the same
+	// scheme (review CR-01: the final resolved destination is revalidated,
+	// not just the configured base URL).
 	if base.Scheme != "https" && !netguard.AllowPrivate() {
 		respond(w, 0, nil, bad("Nextcloud URL must use https"))
 		return
@@ -127,9 +148,9 @@ func HandleContactsSync(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/remote.php/dav/addressbooks/users/" + url.PathEscape(str(b, "username")) + "/contacts/"
 	}
-	target, e := base.Parse(path)
-	if e != nil || target.Host != base.Host {
-		respond(w, 0, nil, bad("CardDAV path must use the Nextcloud host"))
+	target, e := resolveCardDAVTarget(base, path)
+	if e != nil {
+		respond(w, 0, nil, e)
 		return
 	}
 	payload := `<?xml version="1.0"?><card:addressbook-query xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav"><d:prop><d:getetag/><card:address-data/></d:prop></card:addressbook-query>`
