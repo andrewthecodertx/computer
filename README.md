@@ -110,8 +110,10 @@ when they drift apart.
   allowlists, and manual ordering. Membership adds context — it never owns
   or publishes the bookmark: removing an item or a whole collection keeps
   the bookmark, and a bookmark whose share was revoked disappears from
-  collections everywhere. Every mutation carries an expected version, so
-  concurrent editors get a conflict instead of a silent overwrite.
+  collections everywhere. Every mutating PATCH carries an expected version,
+  so concurrent editors get a conflict instead of a silent overwrite;
+  reordering and property deletion advance the affected items' and views'
+  revisions too, and deletions are idempotent removals.
 - Sharing: bookmarks, tags and calendar dates; recipients read shared content.
   Owners can revoke shares. Shared tags and dates expose the associated URLs.
   Tag sharing is group-wide: every recipient of a tag sees all bookmarks

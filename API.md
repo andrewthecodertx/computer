@@ -113,7 +113,12 @@ without owning them — removing an item or a whole collection never touches
 the bookmark. Membership never broadens access: items whose bookmark the
 caller cannot see are omitted from lists/counts and behave as not-found for
 mutations; re-sharing restores the membership. Every mutating PATCH requires
-the expected `version` (400 missing, 409 stale).
+the expected `version` (400 missing, 409 stale). Indirect mutations advance
+revisions too (review CR-09): item reorder bumps every affected item's
+version, and property deletion bumps the versions of items whose value it
+dropped and views whose filter/sort definition it changed. Deletions are
+idempotent removals and take no revision — they never write state computed
+from a client snapshot.
 
 | Method | Path | Returns / behavior |
 |---|---|---|

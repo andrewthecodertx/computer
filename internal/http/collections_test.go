@@ -331,3 +331,86 @@ func TestCollectionRevocationReachesItems(t *testing.T) {
 		t.Fatal("re-sharing did not restore the existing membership")
 	}
 }
+
+// Review CR-09: indirect mutations advance revisions — reorder bumps every
+// affected item, property deletion bumps the items whose values it dropped
+// and only the views whose definitions it actually changed. Stale PATCHes
+// based on the pre-reorder / pre-deletion state get 409s.
+func TestCollectionIndirectMutationsAdvanceVersions(t *testing.T) {
+	srv := testServer(t)
+	alice := newAPIUser(t, srv, "coll-rev@computer.test")
+	bm1 := collectionBookmark(t, alice, "https://127.0.0.1/r1")
+	bm2 := collectionBookmark(t, alice, "https://127.0.0.1/r2")
+	col := alice.request("POST", "/api/collections", map[string]any{"name": "Revisions"}, 201)
+	cid := col["id"].(string)
+	dvid := col["views"].([]any)[0].(map[string]any)["id"].(string)
+
+	prop := alice.request("POST", "/api/collections/"+cid+"/properties", map[string]any{"name": "Label", "type": "TEXT"}, 201)
+	pid := prop["id"].(string)
+	it1 := alice.request("POST", "/api/collections/"+cid+"/items", map[string]any{"bookmarkId": bm1, "propertyValues": map[string]any{pid: "one"}}, 201)
+	it2 := alice.request("POST", "/api/collections/"+cid+"/items", map[string]any{"bookmarkId": bm2}, 201)
+	id1, id2 := it1["id"].(string), it2["id"].(string)
+	filtered := alice.request("POST", "/api/collections/"+cid+"/views", map[string]any{
+		"name": "Filtered", "type": "TABLE",
+		"filters": map[string]any{"operator": "AND", "clauses": []any{map[string]any{"propertyId": pid, "op": "eq", "value": "one"}}},
+	}, 201)
+	fvid := filtered["id"].(string)
+
+	itemVersion := func(id string) int {
+		t.Helper()
+		for _, it := range alice.getJSON("/api/collections/"+cid+"/items", 200) {
+			if it["id"] == id {
+				v, _ := it["version"].(float64)
+				return int(v)
+			}
+		}
+		t.Fatalf("item %s missing from list", id)
+		return -1
+	}
+	viewVersion := func(id string) int {
+		t.Helper()
+		detail := alice.request("GET", "/api/collections/"+cid, nil, 200)
+		for _, raw := range detail["views"].([]any) {
+			v := raw.(map[string]any)
+			if v["id"] == id {
+				n, _ := v["version"].(float64)
+				return int(n)
+			}
+		}
+		t.Fatalf("view %s missing", id)
+		return -1
+	}
+
+	// Reorder advances every affected item's revision...
+	alice.request("PUT", "/api/collections/"+cid+"/items", map[string]any{"order": []string{id2, id1}}, 200)
+	if v := itemVersion(id1); v != 1 {
+		t.Fatalf("reorder left item1 at version %d, want 1", v)
+	}
+	if v := itemVersion(id2); v != 1 {
+		t.Fatalf("reorder left item2 at version %d, want 1", v)
+	}
+	// ...so a PATCH based on the pre-reorder snapshot is a 409, and the
+	// current base still succeeds.
+	alice.request("PATCH", "/api/collections/"+cid+"/items/"+id1, map[string]any{"position": 0, "version": 0}, 409)
+	alice.request("PATCH", "/api/collections/"+cid+"/items/"+id1, map[string]any{"position": 0, "version": 1}, 200)
+	if v := itemVersion(id1); v != 2 {
+		t.Fatalf("PATCH did not advance item1 to version 2: %d", v)
+	}
+
+	// Property deletion: the item carrying a value advances; the item without
+	// one does not. The view filtering on the property advances (and its
+	// clause is scrubbed); the untouched default view keeps its revision.
+	alice.request("DELETE", "/api/collections/"+cid+"/properties/"+pid, nil, 200)
+	if v := itemVersion(id1); v != 3 {
+		t.Fatalf("property deletion left valued item1 at version %d, want 3", v)
+	}
+	if v := itemVersion(id2); v != 1 {
+		t.Fatalf("property deletion bumped valueless item2 to %d, want 1", v)
+	}
+	if v := viewVersion(fvid); v != 1 {
+		t.Fatalf("property deletion left the filtered view at version %d, want 1", v)
+	}
+	if v := viewVersion(dvid); v != 0 {
+		t.Fatalf("property deletion bumped the untouched default view to %d, want 0", v)
+	}
+}

@@ -23,7 +23,12 @@ import (
 //     db.BookmarkVisible, and items whose bookmark was revoked behave as
 //     not-found (N-08). Creating an item requires current visibility.
 //   - Every mutating PATCH requires the expected `version` (400 missing,
-//     409 stale) — the DATA-05 lesson applied from day one.
+//     409 stale) — the DATA-05 lesson applied from day one. Indirect
+//     mutations advance revisions too (review CR-09): reorder bumps every
+//     affected item; property deletion bumps the items whose value it
+//     dropped and the views whose definition it changed. Deletions are
+//     idempotent removals and take no revision — they never write state
+//     computed from a client snapshot.
 //   - Views are queries: filters/sorts/grouping are stored definitions,
 //     validated against registered properties with fixed operator allowlists;
 //     values are bound parameters, never interpolated SQL.
@@ -639,7 +644,13 @@ func HandleCollectionPropertiesDelete(w http.ResponseWriter, r *http.Request) {
 		// Drop the property's values everywhere and scrub it from saved view
 		// definitions, so no view keeps filtering/sorting on a dead id
 		// (groupByPropertyId clears itself via ON DELETE SET NULL).
-		if _, e := tx.ExecContext(r.Context(), `UPDATE "CollectionItem" SET "propertyValues"="propertyValues"-$2,"updatedAt"=now() WHERE "collectionId"=$1 AND jsonb_exists("propertyValues",$2)`, cid, pid); e != nil {
+		// Review CR-09: these are indirect mutations of items and views, so
+		// their revisions advance too — items whose stored value was dropped
+		// and views whose filter/sort definition actually changed. Clients
+		// caching by version then see the structural change, and an in-flight
+		// item PATCH based on the pre-deletion property set gets a 409
+		// instead of resurrecting a dropped value.
+		if _, e := tx.ExecContext(r.Context(), `UPDATE "CollectionItem" SET "propertyValues"="propertyValues"-$2,version=version+1,"updatedAt"=now() WHERE "collectionId"=$1 AND jsonb_exists("propertyValues",$2)`, cid, pid); e != nil {
 			return e
 		}
 		views, e := collectionViews(r, tx, cid)
@@ -651,7 +662,21 @@ func HandleCollectionPropertiesDelete(w http.ResponseWriter, r *http.Request) {
 			sorts := scrubSorts(v["sorts"], pid)
 			rawF, _ := json.Marshal(filters)
 			rawS, _ := json.Marshal(sorts)
-			if _, e := tx.ExecContext(r.Context(), `UPDATE "CollectionView" SET filters=$1,sorts=$2,"updatedAt"=now() WHERE id=$3`, string(rawF), string(rawS), str(v, "id")); e != nil {
+			changed := false
+			if v["filters"] != nil {
+				origF, _ := json.Marshal(v["filters"])
+				changed = string(rawF) != string(origF)
+			}
+			if v["sorts"] != nil {
+				origS, _ := json.Marshal(v["sorts"])
+				if string(rawS) != string(origS) {
+					changed = true
+				}
+			}
+			if !changed {
+				continue // view never referenced the property; leave its version alone
+			}
+			if _, e := tx.ExecContext(r.Context(), `UPDATE "CollectionView" SET filters=$1,sorts=$2,version=version+1,"updatedAt"=now() WHERE id=$3`, string(rawF), string(rawS), str(v, "id")); e != nil {
 				return e
 			}
 		}
@@ -1439,7 +1464,12 @@ func HandleCollectionItemsReorder(w http.ResponseWriter, r *http.Request) {
 		if count != len(order) {
 			return bad("Order must contain every item exactly once")
 		}
-		res, e := tx.ExecContext(r.Context(), `UPDATE "CollectionItem" AS ci SET position=t.ord-1,"updatedAt"=now() FROM unnest($1::text[]) WITH ORDINALITY AS t(iid,ord) WHERE ci.id=t.iid AND ci."collectionId"=$2`, order, cid)
+		// Review CR-09: the reorder advances every affected item's revision —
+		// ordering IS item state, so a client holding a pre-reorder version
+		// gets a 409 on its next PATCH instead of silently re-writing
+		// positions from a stale snapshot (revision-based cache invalidation
+		// sees the change too).
+		res, e := tx.ExecContext(r.Context(), `UPDATE "CollectionItem" AS ci SET position=t.ord-1,version=version+1,"updatedAt"=now() FROM unnest($1::text[]) WITH ORDINALITY AS t(iid,ord) WHERE ci.id=t.iid AND ci."collectionId"=$2`, order, cid)
 		if e != nil {
 			return e
 		}
@@ -1449,7 +1479,7 @@ func HandleCollectionItemsReorder(w http.ResponseWriter, r *http.Request) {
 		// Hidden items (revoked bookmarks) sort after everything the client
 		// ordered, deterministically, so they do not collide with supplied
 		// positions. BookmarkVisible binds the user as $2; exclusion array is $3.
-		if _, e := tx.ExecContext(r.Context(), `UPDATE "CollectionItem" AS ci SET position=sub.pos,"updatedAt"=now() FROM (
+		if _, e := tx.ExecContext(r.Context(), `UPDATE "CollectionItem" AS ci SET position=sub.pos,version=version+1,"updatedAt"=now() FROM (
 			SELECT id, `+strconv.Itoa(len(order))+` + ROW_NUMBER() OVER (ORDER BY id) AS pos
 			FROM "CollectionItem"
 			WHERE "collectionId"=$1 AND id <> ALL($3::text[])
