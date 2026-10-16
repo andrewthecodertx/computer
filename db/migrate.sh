@@ -47,9 +47,11 @@ psql -qc 'CREATE TABLE IF NOT EXISTS _migration(name text PRIMARY KEY, checksum 
 # loop re-checks the ledger per file, and apply+record share one transaction
 # under the advisory lock with no ON CONFLICT, so a racer fails loudly on the
 # primary key instead of double-applying.
-for entry in $(psql -Atc "SELECT name || ' ' || checksum FROM _migration"); do
-  name="${entry%% *}"
-  sum="${entry#* }"
+# Colon-joined so shell word splitting yields one entry per ledger row
+# (names contain no colons; checksums are hex).
+for entry in $(psql -Atc "SELECT name || ':' || checksum FROM _migration"); do
+  name="${entry%%:*}"
+  sum="${entry#*:}"
   f="$MIGRATIONS/$name"
   if [ ! -e "$f" ]; then
     echo "error: migration $name is recorded in the ledger but missing from $MIGRATIONS." >&2
