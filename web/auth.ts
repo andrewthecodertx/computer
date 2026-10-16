@@ -102,15 +102,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     // lifetime and the user's Go cookie sessions survive the logout. Go's
     // /api/auth/signout means "sign out everywhere" — deliberately the same
     // semantics here. Fail-open: if Go is unreachable the local sign-out
-    // still completes, degrading to the previous behavior.
+    // still completes, degrading to the previous behavior. Review CR-02:
+    // this event is the backstop — the UI's explicit /api/session/revoke
+    // call is what makes revocation failure user-visible; here the outcome
+    // is inspected, deadline-bound, and logged without secrets.
     async signOut(message) {
       const token = 'token' in message ? message.token : null
       const secret = process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET
       const id = typeof token?.id === 'string' ? token.id : ''
       const ver = typeof token?.ver === 'number' ? token.ver : 0
       if (!secret || !id || ver < 1) return
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 5000)
       try {
-        await fetch(`${process.env.API_BASE_URL || 'http://localhost:8080'}/api/auth/signout`, {
+        const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:8080'}/api/auth/signout`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -118,8 +123,24 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             Authorization: `Bearer ${jwt.sign({ uid: id, ver, typ: 'assertion' }, secret, { algorithm: 'HS256', issuer: 'computer', expiresIn: '60s' })}`,
           },
           cache: 'no-store',
+          signal: controller.signal,
         })
-      } catch { /* local sign-out proceeds; the assertion channel dies with the NextAuth JWT */ }
+        if (response.status === 401) {
+          // The assertion was rejected — overwhelmingly because an explicit
+          // revoke already bumped the tokenVersion (the revocation this call
+          // exists to guarantee has then already happened). Nothing to retry.
+          console.warn(`signout event: revocation assertion rejected (401) for user ${id}; session is revoked or expired`)
+        } else if (!response.ok) {
+          // Local sign-out still proceeds, but global revocation did NOT
+          // happen: other sessions/assertions survive. Make it visible.
+          console.error(`signout event: Go revocation failed with ${response.status} for user ${id}; other sessions may remain active`)
+        }
+      } catch (error) {
+        const kind = error instanceof Error ? error.name : 'Error'
+        console.error(`signout event: Go revocation unreachable for user ${id} (${kind}); other sessions may remain active`)
+      } finally {
+        clearTimeout(timer)
+      }
     },
   },
 })

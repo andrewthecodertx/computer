@@ -13,6 +13,10 @@ const bookmarks = Array.from({ length: 205 }, (_, i) => ({
   isPublic: false, imapWatchEnabled: false, alertAt: null, dueDate: null, createdAt: '2026-10-07T00:00:00Z', updatedAt: '2026-10-07T00:00:00Z',
 }))
 let failSaves = false
+// Review CR-02: forces Go's signout endpoint to fail so the browser test can
+// prove a revocation failure is reported accurately and local sign-out still
+// completes.
+let failSignout = false
 // Fails only saves whose body.content matches (deterministic mid-loop
 // failure for the DATA-07 envelope test — no racing the serial queue).
 let failContent = null
@@ -34,7 +38,11 @@ const api = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://fixture')
     let result = []
     if (url.pathname === '/api/auth/login') result = { user: { id: 'fixture-user', name: 'Fixture', email: body.email, role: 'USER' }, tokenVersion: 1 }
-    else if (url.pathname === '/api/auth/signout' && req.method === 'POST') { signouts.push(req.headers.authorization || ''); result = { ok: true } }
+    else if (url.pathname === '/api/auth/signout' && req.method === 'POST') {
+      signouts.push(req.headers.authorization || '')
+      if (failSignout) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{"error":"Fixture revocation failed"}'); return }
+      result = { ok: true }
+    }
     else if (url.pathname === '/api/me') result = { user: { id: 'fixture-user' }, effectiveUser: { id: 'fixture-user' }, isAdmin: false, viewingAs: null }
     // The list endpoint is a metadata projection: content bodies stay out (PERF-01).
     else if (url.pathname === '/api/pages') result = [...pages.values()].map(({ content, ...summary }) => summary)
@@ -307,15 +315,32 @@ try {
   assert.deepEqual(errors, [], 'Browser runtime errors')
   console.log('PASS: 205 bookmarks displayed; URL/description/tags editable; local alert time converted to UTC')
 
-  // Browser sign-out must reach Go's revocation (review AUTH-LIFECYCLE): the
-  // Next server's signOut event calls POST /api/auth/signout with a signed
-  // assertion, so the tokenVersion bump kills Go cookie sessions and any
-  // previously minted assertions — not just the local NextAuth JWT.
+  // Revocation failure path (review CR-02): when Go's revocation fails, the
+  // local sign-out still completes, but the UI must say so — local cookie
+  // removal is not confirmed global revocation, and other sessions survive.
   await page.keyboard.press('Escape') // close the bookmark sheet so the top bar is reachable
+  failSignout = true
+  const failedRevoke = page.waitForResponse(r => r.url().includes('/api/session/revoke') && r.request().method() === 'POST')
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await page.getByText('global revocation failed', { exact: false }).first().waitFor()
+  assert.equal((await (await failedRevoke).json()).revoked, false, 'Revoke route reported success despite the backend failure')
+  await page.waitForURL(`${base}/login`)
+  failSignout = false
+  console.log('PASS: failed global revocation is reported and local sign-out still completes')
+
+  // Browser sign-out must reach Go's revocation (review AUTH-LIFECYCLE): the
+  // explicit /api/session/revoke call (with the NextAuth signOut event as
+  // backstop) posts to Go /api/auth/signout with a signed assertion, so the
+  // tokenVersion bump kills Go cookie sessions and any previously minted
+  // assertions — not just the local NextAuth JWT.
+  await context.request.post(`${base}/api/auth/login`, { headers: { Origin: base }, data: { email: 'fixture@computer.test', password: 'password' } })
+  await page.goto(`${base}/pages`)
+  const revoked = page.waitForResponse(r => r.url().includes('/api/session/revoke') && r.request().method() === 'POST')
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  assert.equal((await (await revoked).json()).revoked, true, 'Revoke route did not confirm global revocation')
   await page.waitForURL(`${base}/login`)
   await eventually(() => signouts.length > 0, 'Go signout was not called during browser sign-out')
-  const authHeader = signouts[0]
+  const authHeader = signouts[signouts.length - 1]
   assert.ok(authHeader.startsWith('Bearer '), 'Signout call carried no bearer assertion')
   const claim = JSON.parse(Buffer.from(authHeader.slice('Bearer '.length).split('.')[1], 'base64url').toString())
   assert.equal(claim.uid, 'fixture-user')

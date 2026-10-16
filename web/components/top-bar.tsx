@@ -5,6 +5,7 @@ import { signOut } from 'next-auth/react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { Search, Bell, Plus, Menu, LogOut, Sun, Moon } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Breadcrumb,
@@ -68,6 +69,27 @@ export function TopBar({ user, alerts, onDismissAlert, onAddBookmark, onToggleSi
   const section = SECTION_LABELS[pathname] ?? 'computer'
   const isMac = mounted && typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.userAgent)
   const quickFindHint = !mounted ? '⌘K' : isMac ? '⌘K' : 'Ctrl K'
+
+  // Review CR-02: local sign-out is always available, but it is NOT the same
+  // claim as confirmed global revocation. Ask the trusted server to revoke
+  // (Go tokenVersion bump) first and report honestly when that fails — other
+  // devices and already-issued assertions then survive until the backend
+  // recovers, and the user is told so instead of being silently logged out.
+  const [signingOut, setSigningOut] = useState(false)
+  const doSignOut = async () => {
+    if (signingOut) return
+    setSigningOut(true)
+    let revoked = false
+    try {
+      const res = await fetch('/api/session/revoke', { method: 'POST' })
+      const data = await res.json().catch(() => null)
+      revoked = res.ok && data?.revoked === true
+    } catch { /* unreachable Next route — treated as a revocation failure below */ }
+    if (!revoked) {
+      toast.error('Signed out on this device, but global revocation failed — other sessions may remain signed in until the backend recovers.')
+    }
+    void signOut({ redirectTo: '/login' })
+  }
 
   return (
     <header className="flex items-center gap-2 border-b bg-card px-3 py-2">
@@ -152,7 +174,7 @@ export function TopBar({ user, alerts, onDismissAlert, onAddBookmark, onToggleSi
           {(user?.name ?? user?.email ?? '?')[0]?.toUpperCase()}
         </div>
         <span className="hidden sm:inline text-sm font-medium">{user?.name ?? user?.email ?? 'User'}</span>
-        <Button variant="ghost" size="icon-sm" onClick={() => signOut({ redirectTo: '/login' })} aria-label="Sign out">
+        <Button variant="ghost" size="icon-sm" onClick={doSignOut} disabled={signingOut} aria-label="Sign out">
           <LogOut className="h-4 w-4" />
         </Button>
       </div>
