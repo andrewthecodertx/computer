@@ -48,21 +48,11 @@ async function json(response, status = 200) {
   return response.json()
 }
 try {
+  // Review CR-03: every accepted registration answers with the SAME uniform
+  // {ok:true} body — the account id is private until authentication
+  // establishes ownership, so it comes from /api/me after login.
   const signup = await json(await context.request.post(`${base}/api/signup`, { data: { email, password, name: 'Browser QA' } }), 201)
-  accounts.push(signup.userId)
-  // Target/cleanup identity preflight (review TEST-03): the account created
-  // through BASE_URL must exist in the local compose database that cleanup
-  // deletes from. If it does not, the browser target is backed by some other
-  // database — abort before creating further data.
-  if (!keepData && loopback) {
-    assert.match(signup.userId, /^[a-z0-9]+$/i)
-    const found = execFileSync('docker', ['compose', 'exec', '-T', 'db', 'psql', '-U', 'computer', '-d', 'computer', '-Atc',
-      `SELECT count(*) FROM "User" WHERE id='${signup.userId}';`], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
-    if (found !== '1') {
-      throw new Error(`preflight failed: QA account ${signup.userId} created through ${base} is not present in the local compose database; target and cleanup environments differ (remove it on the target environment)`)
-    }
-    console.log('PASS: browser target and cleanup database are the same stack')
-  }
+  assert.deepEqual(signup, { ok: true })
   await page.goto(`${base}/login`)
   await page.getByPlaceholder('Email', { exact: true }).fill(email)
   await page.getByPlaceholder('Password', { exact: true }).fill(password)
@@ -70,7 +60,20 @@ try {
   await page.waitForURL('**/pages')
   await page.getByRole('heading', { name: 'No pages yet', exact: true }).waitFor()
   const me = await json(await context.request.get(`${base}/api/me`))
-  assert.equal(me.user.id, signup.userId)
+  accounts.push(me.user.id)
+  // Target/cleanup identity preflight (review TEST-03): the account created
+  // through BASE_URL must exist in the local compose database that cleanup
+  // deletes from. If it does not, the browser target is backed by some other
+  // database — abort before creating further data.
+  if (!keepData && loopback) {
+    assert.match(me.user.id, /^[a-z0-9]+$/i)
+    const found = execFileSync('docker', ['compose', 'exec', '-T', 'db', 'psql', '-U', 'computer', '-d', 'computer', '-Atc',
+      `SELECT count(*) FROM "User" WHERE id='${me.user.id}';`], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+    if (found !== '1') {
+      throw new Error(`preflight failed: QA account ${me.user.id} created through ${base} is not present in the local compose database; target and cleanup environments differ (remove it on the target environment)`)
+    }
+    console.log('PASS: browser target and cleanup database are the same stack')
+  }
   await page.getByRole('button', { name: 'New', exact: true }).first().click()
   const dialog = page.getByRole('dialog')
   await dialog.getByPlaceholder('https://...').fill('https://example.org/browser-qa')

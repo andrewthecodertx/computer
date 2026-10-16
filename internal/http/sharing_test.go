@@ -13,9 +13,11 @@ func TestRevocationAndForeignRelations(t *testing.T) {
 	a, b := newClient(), newClient()
 	account := func(c apiClient, email string) string {
 		body := map[string]any{"email": email, "password": "test-password"}
-		id := c.request("POST", "/api/signup", body, 201)["userId"].(string)
+		c.request("POST", "/api/signup", body, 201)
 		c.request("POST", "/api/auth/login", body, 200)
-		return id
+		// Review CR-03: the id comes from the authenticated session, not the
+		// uniform signup body.
+		return meID(c)
 	}
 	account(a, "owner@computer.test")
 	bid := account(b, "recipient@computer.test")

@@ -14,7 +14,7 @@ non-admin administration, **400** for invalid input, **409** for duplicates.
 |---|---|---|
 | GET | `/healthz` | `{"status":"ok"}` (process liveness) |
 | GET | `/readyz` | `{"status":"ready"}` after database ping; 503 when unavailable |
-| POST | `/api/signup` | 201 `{ok:true,userId}`; body `{email,password,name?}`; 403 for operator-reserved `ADMIN_EMAILS` addresses |
+| POST | `/api/signup` | 201 `{ok:true}` — the same uniform body for fresh, duplicate and operator-reserved addresses (review CR-03: no existence oracle); body `{email,password,name?}` |
 | POST | `/api/auth/login` | `{ok:true,user:{id,name,email,image,role}}` and signed HttpOnly cookie |
 | GET | `/api/auth/session` | `{user}` or `null` for no valid cookie |
 | POST | `/api/auth/signout` | `{ok:true}` and expired cookie |

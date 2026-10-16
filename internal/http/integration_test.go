@@ -102,6 +102,15 @@ func (a apiClient) request(method, path string, body any, status int) map[string
 	json.Unmarshal(raw, &v)
 	return v
 }
+
+// meID resolves the authenticated client's user id. Signup responses no
+// longer carry it (review CR-03: identical bodies for every accepted
+// registration, so no unauthenticated existence oracle); identity comes from
+// the session after login.
+func meID(c apiClient) string {
+	c.t.Helper()
+	return c.request("GET", "/api/me", nil, 200)["user"].(map[string]any)["id"].(string)
+}
 func TestApplicationFlows(t *testing.T) {
 	srv := testServer(t)
 	newClient := func() apiClient { jar, _ := cookiejar.New(nil); return apiClient{t, &http.Client{Jar: jar}, srv.URL} }
@@ -109,12 +118,18 @@ func TestApplicationFlows(t *testing.T) {
 	post := func(email string) map[string]any {
 		return map[string]any{"email": email, "password": "a-long-test-password"}
 	}
-	au := alice.request("POST", "/api/signup", post("alice@computer.test"), 201)["userId"].(string)
-	bu := bob.request("POST", "/api/signup", post("bob@computer.test"), 201)["userId"].(string)
-	// Review SEC-4: duplicate signup returns 201 with empty userId (not 409).
 	alice.request("POST", "/api/signup", post("alice@computer.test"), 201)
+	bob.request("POST", "/api/signup", post("bob@computer.test"), 201)
+	// Review SEC-4/CR-03: a duplicate signup returns the SAME 201 {"ok":true}
+	// body as a fresh creation (no 409, no distinguishing field).
+	dup := alice.request("POST", "/api/signup", post("alice@computer.test"), 201)
+	if len(dup) != 1 || dup["ok"] != true {
+		t.Fatalf("duplicate signup body differs from a fresh creation: %v", dup)
+	}
 	alice.request("POST", "/api/auth/login", post("alice@computer.test"), 200)
 	bob.request("POST", "/api/auth/login", post("bob@computer.test"), 200)
+	au := meID(alice)
+	bu := meID(bob)
 	if alice.request("GET", "/api/me", nil, 200)["isAdmin"] != true {
 		t.Fatal("first signup was not admin")
 	}

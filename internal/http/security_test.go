@@ -45,9 +45,11 @@ func accountClient(t *testing.T, base, email string) (apiClient, string) {
 	jar, _ := cookiejar.New(nil)
 	c := apiClient{t, &http.Client{Jar: jar}, base}
 	body := map[string]any{"email": email, "password": "test-long-password"}
-	id := c.request("POST", "/api/signup", body, 201)["userId"].(string)
+	c.request("POST", "/api/signup", body, 201)
 	c.request("POST", "/api/auth/login", body, 200)
-	return c, id
+	// Review CR-03: the signup body no longer carries the id; identity comes
+	// from the authenticated session.
+	return c, meID(c)
 }
 
 func TestAdminEnrollmentRequiresTrustedIdentity(t *testing.T) {
@@ -56,11 +58,12 @@ func TestAdminEnrollmentRequiresTrustedIdentity(t *testing.T) {
 	user, uid := accountClient(t, srv.URL, "unverified@computer.test")
 	t.Setenv("ADMIN_EMAILS", "reserved@computer.test,unverified@computer.test")
 	// Reserved addresses answer exactly like existing accounts (no 403 oracle).
-	// Review SEC-4: operator-reserved addresses also return 201 with empty
-	// userId to avoid an existence oracle; they are not 409.
+	// Review SEC-4/CR-03: operator-reserved addresses return the SAME uniform
+	// 201 {"ok":true} body as every other accepted registration — no userId
+	// field, no 409.
 	reserved := user.request("POST", "/api/signup", map[string]any{"email": "reserved@computer.test", "password": "test-password"}, 201)
-	if reserved["userId"] != "" {
-		t.Fatal("operator-reserved address must return empty userId")
+	if len(reserved) != 1 || reserved["ok"] != true {
+		t.Fatalf("operator-reserved address body is distinguishable: %v", reserved)
 	}
 	if user.request("GET", "/api/me", nil, 200)["isAdmin"] != false {
 		t.Fatal("unverified address promoted to admin")
