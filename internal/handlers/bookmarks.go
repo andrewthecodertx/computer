@@ -183,8 +183,15 @@ func setTags(r *http.Request, tx *sql.Tx, id string, tags []string) error {
 	}
 	return nil
 }
-func addPreview(ctx context.Context, d object, create bool) {
-	p := preview.FetchPreview(ctx, str(d, "url"))
+
+// addPreview fetches og/favicon metadata for the bookmark's URL through the
+// shared preview budget (review CR-06): bookmark mutations and the dedicated
+// preview route draw from the SAME per-identity rate and global concurrency
+// limits, so saves cannot bypass the route's throttle. Preview work is
+// decorative — when the budget is exhausted the bookmark still persists,
+// just without fresh og metadata.
+func addPreview(ctx context.Context, key string, d object, create bool) {
+	p := preview.FetchPreview(ctx, key, str(d, "url"))
 	d["favicon"], d["ogImage"], d["ogTitle"], d["ogDescription"] = p.Favicon, p.OgImage, p.OgTitle, p.OgDescription
 	if create {
 		if d["title"] == nil {
@@ -220,7 +227,7 @@ func HandleBookmarksCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	id := db.NewID()
 	d["id"], d["ownerId"] = id, user(r)
-	addPreview(r.Context(), d, true)
+	addPreview(r.Context(), previewKey(r), d, true)
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
 		if e := checkRelations(r, tx, d, tags); e != nil {
 			return e
@@ -267,7 +274,7 @@ func HandleBookmarksUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s := str(d, "url"); s != "" && s != str(existing, "url") {
-		addPreview(r.Context(), d, false)
+		addPreview(r.Context(), previewKey(r), d, false)
 	}
 	d["updatedAt"] = time.Now().UTC()
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
@@ -354,11 +361,16 @@ func HandleBookmarksMarkdown(w http.ResponseWriter, r *http.Request) {
 	}
 	markdown.Send(w, markdown.BookmarkDocument(v), str(v, "title"))
 }
+
+// previewKey is the shared-budget identity for preview work (review CR-06):
+// per user, across every entry point (route + mutations).
+func previewKey(r *http.Request) string { return "user:" + user(r) }
+
 func HandlePreview(w http.ResponseWriter, r *http.Request) {
 	u := r.URL.Query().Get("url")
 	if !validURL(u) {
 		respond(w, 0, nil, bad("A valid HTTP(S) URL is required"))
 		return
 	}
-	respond(w, 200, preview.FetchPreview(r.Context(), u), nil)
+	respond(w, 200, preview.FetchPreview(r.Context(), previewKey(r), u), nil)
 }

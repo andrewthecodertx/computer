@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,9 +37,9 @@ func publicDial(ctx context.Context, network, address string) (net.Conn, error) 
 var previewClient = &http.Client{
 	Timeout: 8 * time.Second,
 	Transport: &http.Transport{
-		DialContext:       publicDial,
-		IdleConnTimeout:   30 * time.Second,
-		MaxIdleConns:      32,
+		DialContext:         publicDial,
+		IdleConnTimeout:     30 * time.Second,
+		MaxIdleConns:        32,
 		MaxIdleConnsPerHost: 8,
 	},
 	CheckRedirect: func(r *http.Request, via []*http.Request) error {
@@ -52,11 +53,86 @@ var previewClient = &http.Client{
 	},
 }
 
-// FetchPreview resolves metadata for raw. The caller's context bounds the
-// fetch (review CORR-02): when the incoming request is cancelled — the user
-// closed the tab or aborted the save — the outbound I/O and HTML parsing stop
-// instead of running to the 8-second client timeout.
-func FetchPreview(ctx context.Context, raw string) Preview {
+// Shared preview-work budget (review CR-06). EVERY entry point that fetches
+// preview metadata — the dedicated /api/preview route, bookmark creation and
+// URL-changing updates — reserves against this one budget, so mutations can
+// no longer bypass the preview route's throttle and generate unbounded
+// outbound work. Two layers:
+//   - per-identity rate: at most keyLimit reservations per keyWindow;
+//   - global concurrency: at most maxConcurrent fetches in flight.
+//
+// Exhaustion returns an empty Preview immediately instead of queueing:
+// previews are decorative, and a bookmark save must never be coupled to
+// preview availability (the row persists without og metadata).
+const (
+	keyLimit      = 20
+	keyWindow     = time.Minute
+	maxConcurrent = 8
+)
+
+type rateWindow struct {
+	count int
+	reset time.Time
+}
+
+type budgetStore struct {
+	mu       sync.Mutex
+	inFlight int
+	keys     map[string]*rateWindow
+}
+
+var sharedBudget = &budgetStore{keys: map[string]*rateWindow{}}
+
+// Reserve claims one preview-work slot for key (the requesting identity).
+// The returned release function MUST be called when the fetch finishes.
+// ok is false when either budget layer is exhausted.
+func Reserve(key string) (release func(), ok bool) {
+	if key == "" {
+		key = "anonymous"
+	}
+	sharedBudget.mu.Lock()
+	defer sharedBudget.mu.Unlock()
+	if sharedBudget.inFlight >= maxConcurrent {
+		return nil, false
+	}
+	now := time.Now()
+	// Opportunistic prune keeps the map bounded by active identities.
+	if len(sharedBudget.keys) > 4096 {
+		for k, w := range sharedBudget.keys {
+			if now.After(w.reset) {
+				delete(sharedBudget.keys, k)
+			}
+		}
+	}
+	w := sharedBudget.keys[key]
+	if w == nil || now.After(w.reset) {
+		w = &rateWindow{reset: now.Add(keyWindow)}
+		sharedBudget.keys[key] = w
+	}
+	if w.count >= keyLimit {
+		return nil, false
+	}
+	w.count++
+	sharedBudget.inFlight++
+	return func() {
+		sharedBudget.mu.Lock()
+		sharedBudget.inFlight--
+		sharedBudget.mu.Unlock()
+	}, true
+}
+
+// FetchPreview resolves metadata for raw on behalf of key (the requesting
+// identity, e.g. "user:<id>"). The caller's context bounds the fetch (review
+// CORR-02): when the incoming request is cancelled — the user closed the tab
+// or aborted the save — the outbound I/O and HTML parsing stop instead of
+// running to the 8-second client timeout. An exhausted shared budget (review
+// CR-06) yields an empty Preview without any outbound work.
+func FetchPreview(ctx context.Context, key, raw string) Preview {
+	release, ok := Reserve(key)
+	if !ok {
+		return Preview{}
+	}
+	defer release()
 	u, e := url.Parse(raw)
 	if e != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
 		return Preview{}
