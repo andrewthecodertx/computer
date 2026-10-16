@@ -13,6 +13,7 @@ import (
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
 	"log"
+	"math"
 	"net"
 	"os"
 	"sort"
@@ -177,8 +178,17 @@ func search(c *client.Client, m Mailbox, from, subject string, cp *Checkpoint) (
 	if e != nil {
 		return nil, next, e
 	}
-	if cp != nil && cp.UIDValidity != status.UidValidity {
-		next = Checkpoint{} // UID space was reset; re-ingest from the start
+	// Effective checkpoint (review CR-15): exactly one normalized checkpoint
+	// drives BOTH the UID filtering and the advancement below. When the
+	// folder's UIDVALIDITY changed, the previous UID space is meaningless —
+	// the effective checkpoint resets to zero so every UID in the new space
+	// is (re)ingested, and filtering must never consult the stale LastUID.
+	eff := Checkpoint{}
+	if cp != nil {
+		if cp.UIDValidity == status.UidValidity {
+			eff = *cp
+		}
+		next = eff
 	}
 	next.UIDValidity = status.UidValidity
 	criteria := imap.NewSearchCriteria()
@@ -187,6 +197,16 @@ func search(c *client.Client, m Mailbox, from, subject string, cp *Checkpoint) (
 	}
 	if subject != "" {
 		criteria.Header.Add("Subject", subject)
+	}
+	// Review CR-19: constrain the server-side SEARCH to the UID window that
+	// can still hold unhandled messages, so a caught-up source does not
+	// re-transfer its whole match history every pass. "n:*" is inclusive of
+	// the mailbox's highest UID even when that UID is below n (RFC 3501
+	// seq-number semantics), so the defensive local filter below stays —
+	// the range is an optimization, never the correctness boundary.
+	if cp != nil && eff.LastUID > 0 && eff.LastUID < math.MaxUint32 {
+		criteria.Uid = new(imap.SeqSet)
+		criteria.Uid.AddRange(eff.LastUID+1, 0) // Stop 0 renders as "*"
 	}
 	uids, e := c.UidSearch(criteria)
 	if e != nil {
@@ -199,11 +219,12 @@ func search(c *client.Client, m Mailbox, from, subject string, cp *Checkpoint) (
 	// the cap would land below the new checkpoint and be dropped forever.
 	truncated := false
 	if cp != nil {
-		// Incremental ingestion: everything at or below the checkpoint has
-		// already been durably handled by an earlier pass.
+		// Incremental ingestion: everything at or below the EFFECTIVE
+		// checkpoint has already been durably handled by an earlier pass
+		// (or the UID space was reset and nothing has — review CR-15).
 		filtered := uids[:0]
 		for _, uid := range uids {
-			if uid > cp.LastUID {
+			if uid > eff.LastUID {
 				filtered = append(filtered, uid)
 			}
 		}
