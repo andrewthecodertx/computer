@@ -97,6 +97,11 @@ func HandleKanbanColumnsDelete(w http.ResponseWriter, r *http.Request) {
 	var dest string
 	var moved int
 	e := db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
+		// The user row is the single serialization point for board mutations
+		// (review CR-05): bookmark create/update take the same lock before
+		// validating/assigning kanbanColumnId, so this handler's snapshot of
+		// affected bookmarks, the move and the column delete cannot interleave
+		// with a competing assignment.
 		if e := lockUser(r, tx); e != nil {
 			return e
 		}

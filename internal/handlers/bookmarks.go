@@ -229,6 +229,16 @@ func HandleBookmarksCreate(w http.ResponseWriter, r *http.Request) {
 	d["id"], d["ownerId"] = id, user(r)
 	addPreview(r.Context(), previewKey(r), d, true)
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
+		// One locking protocol for board mutations (review CR-05): column
+		// deletion holds lockUser while it snapshots the affected bookmarks,
+		// moves them and drops the column. Bookmark writes that validate and
+		// assign kanbanColumnId take the SAME lock first, so a concurrent
+		// create can no longer land on a column the deletion already counted
+		// as moved (or escape its move set). Lock order is always user row →
+		// bookmarks/columns, matching every other lockUser transaction.
+		if e := lockUser(r, tx); e != nil {
+			return e
+		}
 		if e := checkRelations(r, tx, d, tags); e != nil {
 			return e
 		}
@@ -278,6 +288,13 @@ func HandleBookmarksUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	d["updatedAt"] = time.Now().UTC()
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
+		// Review CR-05: same board-mutation locking protocol as create and
+		// column deletion — placement is validated (checkRelations) and
+		// written under the user lock, so a column deletion can neither race
+		// this assignment nor move a bookmark this write just placed.
+		if e := lockUser(r, tx); e != nil {
+			return e
+		}
 		if e := checkRelations(r, tx, d, tags); e != nil {
 			return e
 		}
