@@ -12,15 +12,22 @@ import (
 
 // Encryption of IMAP passwords. Porting guide 3.5.
 //
-// Ciphertext format (review SEC-9):
-//	v1: base64( version(1) || IV(12) || tag(16) || ciphertext )
-//	legacy (pre-HKDF): base64( IV(12) || tag(16) || ciphertext ) — detected by
-//	missing version byte or version != 1; derived with raw SHA-256 for
-//	backward compatibility during rotation.
+// Ciphertext format (review SEC-9, layout corrected per review CR-20 —
+// gcm.Seal emits ciphertext followed by tag):
+//	v1: base64( version(1) || IV(12) || ciphertext || tag(16) )
+//	legacy (pre-HKDF): base64( IV(12) || ciphertext || tag(16) ) — no version
+//	byte; derived with raw SHA-256 for backward compatibility during rotation.
 //
 // The key is now derived via HKDF-SHA256 with a fixed context string.
 // Changing the secret makes saved IMAP passwords unreadable unless the
 // legacy fallback is used (handled by Decrypt).
+//
+// Review CR-20: a legacy record starts with a RANDOM IV byte, which can
+// coincidentally equal versionByte — the format cannot be sniffed from the
+// first byte alone. Decrypt therefore treats an apparent version byte as a
+// hint only: the v1 decode is attempted first and, when GCM authentication
+// does not succeed, the WHOLE record is retried as legacy. Only successful
+// authenticated decryption ever selects a format/key.
 
 const (
 	algorithm       = "aes-256-gcm"
@@ -89,7 +96,10 @@ func Encrypt(text, secret string) (string, error) {
 
 // Decrypt reverses Encrypt. Returns an error on malformed input.
 // Supports both v1 (HKDF) and legacy (raw SHA-256) ciphertexts for
-// transparent rotation.
+// transparent rotation. Review CR-20: the leading-byte check is only a hint —
+// a legacy IV byte can collide with versionByte, so a failed v1 decode falls
+// back to an authenticated legacy decode of the whole record instead of
+// declaring the password unreadable.
 func Decrypt(data, secret string) (string, error) {
 	if secret == "" {
 		return "", errors.New("missing encryption secret")
@@ -98,16 +108,19 @@ func Decrypt(data, secret string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Legacy ciphertexts (pre-HKDF) have no version byte: they start with
-	// the IV (12 bytes). We detect this by checking if the first byte
-	// could be a valid version (1). If it's not 1, we treat it as legacy.
-	var key []byte
 	if len(raw) >= 1 && raw[0] == versionByte {
-		key = Key(secret)
-		raw = raw[1:] // strip version byte
-	} else {
-		key = LegacyKey(secret)
+		if plain, e := openGCM(raw[1:], Key(secret)); e == nil {
+			return plain, nil
+		}
+		// Fall through: either a tampered/miskeyed v1 record (the legacy
+		// retry will fail authentication too) or a legacy record whose random
+		// IV starts with the version byte.
 	}
+	return openGCM(raw, LegacyKey(secret))
+}
+
+// openGCM decodes one record body: IV(12) || ciphertext || tag(16).
+func openGCM(raw, key []byte) (string, error) {
 	if len(raw) < ivLength+tagLength {
 		return "", errShortInputError
 	}
