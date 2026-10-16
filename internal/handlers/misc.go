@@ -274,24 +274,30 @@ func HandleImapSave(w http.ResponseWriter, r *http.Request) {
 		respond(w, 0, nil, e)
 		return
 	}
-	var pw string
+	// Review CR-21: a blank/masked password means "keep the stored secret".
+	// The old path read the existing ciphertext and re-submitted it in the
+	// upsert, so a password saved concurrently between that read and write
+	// was silently rolled back. The keep-stored path therefore never assigns
+	// the password column at all — whatever is stored at commit time wins.
 	if m.Password == "" || m.Password == "••••••••" {
-		v, e := db.One(r.Context(), database(r), `SELECT jsonb_build_object('password',password) FROM "ImapConfig" WHERE "userId"=$1`, user(r))
-		if errors.Is(e, db.ErrNotFound) {
+		res, e := database(r).ExecContext(r.Context(), `UPDATE "ImapConfig" SET host=$1,port=$2,tls=$3,username=$4,folder=$5 WHERE "userId"=$6`, m.Host, m.Port, m.TLS, m.Username, m.Folder, user(r))
+		if e != nil {
+			respond(w, 0, nil, e)
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			// No configuration exists to keep a password from (or it was
+			// removed concurrently): initial creation requires a real one.
 			respond(w, 0, nil, bad("Password required"))
 			return
 		}
-		if e != nil {
-			respond(w, 0, nil, e)
-			return
-		}
-		pw = str(v, "password")
-	} else {
-		pw, e = crypt.Encrypt(m.Password, config.Load().EncryptionSecret())
-		if e != nil {
-			respond(w, 0, nil, e)
-			return
-		}
+		respond(w, 200, OK{true}, nil)
+		return
+	}
+	pw, e := crypt.Encrypt(m.Password, config.Load().EncryptionSecret())
+	if e != nil {
+		respond(w, 0, nil, e)
+		return
 	}
 	_, e = database(r).ExecContext(r.Context(), `INSERT INTO "ImapConfig"(id,host,port,tls,username,password,folder,"userId") VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT("userId") DO UPDATE SET host=EXCLUDED.host,port=EXCLUDED.port,tls=EXCLUDED.tls,username=EXCLUDED.username,password=EXCLUDED.password,folder=EXCLUDED.folder`, db.NewID(), m.Host, m.Port, m.TLS, m.Username, pw, m.Folder, user(r))
 	respond(w, 200, OK{true}, e)

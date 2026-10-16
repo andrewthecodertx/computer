@@ -298,8 +298,15 @@ func LoadMailbox(ctx context.Context, d *db.DB, user string) (Mailbox, error) {
 		pw = legacy
 		if cfg.EncryptionSecret() != cfg.Secret() {
 			if enc, encErr := crypt.Encrypt(pw, cfg.EncryptionSecret()); encErr == nil {
-				if _, updErr := d.ExecContext(ctx, `UPDATE "ImapConfig" SET password=$1 WHERE "userId"=$2`, enc, user); updErr != nil {
+				// Review CR-21: compare-and-swap against the EXACT ciphertext
+				// this pass decrypted. A password saved concurrently between
+				// the read and this write must win; zero updated rows means
+				// exactly that, not permission to overwrite.
+				res, updErr := d.ExecContext(ctx, `UPDATE "ImapConfig" SET password=$1 WHERE "userId"=$2 AND password=$3`, enc, user, s("password"))
+				if updErr != nil {
 					log.Printf("imap: re-encrypt stored password under ENCRYPTION_KEY: %v", updErr)
+				} else if n, _ := res.RowsAffected(); n == 0 {
+					log.Printf("imap: stored password changed during key migration; keeping the newer value")
 				}
 			}
 		}
@@ -311,6 +318,7 @@ func LoadMailbox(ctx context.Context, d *db.DB, user string) (Mailbox, error) {
 func PublicSourceTypes() []db.Object {
 	return []db.Object{{"type": "email", "label": "Email (IMAP)", "description": "Search your configured mailbox for matching messages", "stub": false, "configFields": []db.Object{{"key": "from", "label": "From", "placeholder": "sender@domain.com"}, {"key": "subject", "label": "Subject", "placeholder": "Subject contains"}}}}
 }
+
 // CheckResult is the structured outcome of one signal pass (review CR-16).
 // Sources counts the sources considered, Created the signals inserted, and
 // Failed the sources whose check did not complete successfully (mailbox
