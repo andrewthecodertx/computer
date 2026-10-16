@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -178,26 +179,66 @@ func HandleContactsSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	synced := 0
+	removed := 0
+	seenUIDs := []string{}
+	// complete tracks whether the server answered with full data for every
+	// card. Deletion reconciliation (review CR-07) runs ONLY on a complete,
+	// non-empty snapshot: a failed, truncated or partially-withheld response
+	// must never be read as "these contacts were deleted remotely".
+	complete := true
 	e = db.Transaction(r.Context(), database(r), func(tx *sql.Tx) error {
 		for _, entry := range dav.Responses {
+			gotData := false
 			for _, prop := range entry.Propstats {
 				if !strings.Contains(prop.Status, "200") {
 					continue
 				}
 				v := parseVCard(prop.Prop.Data)
-				if v["UID"] == "" || v["FN"] == "" {
+				uid, fn := vCardPick(v["UID"]), vCardPick(v["FN"])
+				if uid == "" || fn == "" {
+					// A card we cannot identify stays untouched locally — and
+					// blocks reconciliation, since we cannot prove which
+					// stored contact (if any) it corresponds to.
+					complete = false
 					continue
 				}
-				_, e := tx.ExecContext(r.Context(), `INSERT INTO "Contact"(id,uid,"displayName",email,phone,"cardDavUrl","userId") VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(uid,"userId") DO UPDATE SET "displayName"=EXCLUDED."displayName",email=EXCLUDED.email,phone=EXCLUDED.phone,"cardDavUrl"=EXCLUDED."cardDavUrl","updatedAt"=now()`, db.NewID(), v["UID"], v["FN"], nullable(v["EMAIL"]), nullable(v["TEL"]), entry.Href, user(r))
+				gotData = true
+				seenUIDs = append(seenUIDs, uid)
+				_, e := tx.ExecContext(r.Context(), `INSERT INTO "Contact"(id,uid,"displayName",email,phone,"cardDavUrl",source,"userId") VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(uid,"userId") DO UPDATE SET "displayName"=EXCLUDED."displayName",email=EXCLUDED.email,phone=EXCLUDED.phone,"cardDavUrl"=EXCLUDED."cardDavUrl",source=EXCLUDED.source,"updatedAt"=now()`, db.NewID(), uid, fn, nullable(vCardPick(v["EMAIL"])), nullable(vCardPick(v["TEL"])), entry.Href, target.String(), user(r))
 				if e != nil {
 					return e
 				}
 				synced++
 			}
+			if !gotData {
+				complete = false
+			}
+		}
+		// Remote-deletion reconciliation (review CR-07). Policy: the sync
+		// MIRRORS the configured address book, scoped by provenance — only
+		// contacts previously imported from THIS source URL are candidates,
+		// manually created contacts (source NULL) and other address books'
+		// imports are never touched, and bookmarks referencing a removed
+		// contact keep working (contactId is ON DELETE SET NULL). Guards:
+		// a non-empty, fully-answered snapshot only; an empty or partial
+		// response preserves everything (a genuinely emptied address book
+		// stops mirroring deletions until it has at least one card — the
+		// deliberate safe-side tradeoff).
+		if complete && synced > 0 {
+			res, e := tx.ExecContext(r.Context(), `DELETE FROM "Contact" WHERE "userId"=$1 AND source=$2 AND NOT (uid = ANY($3::text[]))`, user(r), target.String(), seenUIDs)
+			if e != nil {
+				return e
+			}
+			n, _ := res.RowsAffected()
+			removed = int(n)
 		}
 		return nil
 	})
-	respond(w, 200, object{"synced": synced}, e)
+	if e != nil {
+		respond(w, 0, nil, e)
+		return
+	}
+	respond(w, 200, object{"synced": synced, "removed": removed}, nil)
 }
 func nullable(s string) any {
 	if s == "" {
@@ -205,23 +246,117 @@ func nullable(s string) any {
 	}
 	return s
 }
-func parseVCard(s string) map[string]string {
+
+// vCardValue is one parsed property occurrence: its parameters (TYPE, PREF,
+// ENCODING, ...) and its unescaped value. Repeated properties keep EVERY
+// occurrence in file order (review CR-08) instead of the last one clobbering
+// the rest.
+type vCardValue struct {
+	params map[string][]string
+	value  string
+}
+
+// splitVCardName splits the property name on unquoted semicolons so quoted
+// parameter values ("...;X=a;b") survive.
+func splitVCardName(name string) []string {
+	out := []string{}
+	var cur strings.Builder
+	inQuotes := false
+	for _, r := range name {
+		switch {
+		case r == '"':
+			inQuotes = !inQuotes
+			cur.WriteRune(r)
+		case r == ';' && !inQuotes:
+			out = append(out, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	return append(out, cur.String())
+}
+
+// parseVCard parses the documented subset of vCard (RFC 2426/6350) the
+// contact sync consumes: CRLF and bare-LF unfolding, group prefixes
+// (item1.EMAIL), parameter lists (including bare vCard 2.1 tokens as
+// implicit TYPE values), and the standard escapes. Unsupported data is
+// dropped, not silently misparsed (review CR-08): properties declaring a
+// base64 ENCODING are skipped — the stored fields (UID/FN/EMAIL/TEL) are
+// never legitimately encoded, and keeping the raw text would pretend to be
+// a correct parse. A colon inside a quoted parameter value is outside the
+// supported subset.
+func parseVCard(s string) map[string][]vCardValue {
 	s = strings.ReplaceAll(s, "\r\n ", "")
 	s = strings.ReplaceAll(s, "\r\n\t", "")
-	out := map[string]string{}
+	s = strings.ReplaceAll(s, "\n ", "")
+	s = strings.ReplaceAll(s, "\n\t", "")
+	out := map[string][]vCardValue{}
 	for _, line := range strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n") {
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) != 2 {
 			continue
 		}
-		key := strings.ToUpper(strings.SplitN(parts[0], ";", 2)[0])
+		fields := splitVCardName(parts[0])
+		key := strings.ToUpper(fields[0])
 		if i := strings.LastIndex(key, "."); i >= 0 {
-			key = key[i+1:]
+			key = key[i+1:] // strip group prefix (item1.EMAIL -> EMAIL)
 		}
-		value := strings.NewReplacer(`\n`, "\n", `\,`, ",", `\;`, ";", `\\`, `\`).Replace(parts[1])
-		out[key] = value
+		if key == "" {
+			continue
+		}
+		params := map[string][]string{}
+		for _, p := range fields[1:] {
+			kv := strings.SplitN(p, "=", 2)
+			if len(kv) != 2 {
+				// Bare token (vCard 2.1 style "EMAIL;INTERNET;WORK"): an
+				// implicit TYPE value.
+				if tok := strings.TrimSpace(kv[0]); tok != "" {
+					params["TYPE"] = append(params["TYPE"], strings.ToUpper(tok))
+				}
+				continue
+			}
+			pk := strings.ToUpper(strings.TrimSpace(kv[0]))
+			for _, pv := range strings.Split(kv[1], ",") {
+				params[pk] = append(params[pk], strings.ToUpper(strings.Trim(strings.TrimSpace(pv), `"`)))
+			}
+		}
+		if enc := params["ENCODING"]; len(enc) > 0 && (enc[0] == "B" || enc[0] == "BASE64") {
+			continue // unsupported encoding: drop instead of misparsing
+		}
+		value := strings.NewReplacer(`\n`, "\n", `\N`, "\n", `\,`, ",", `\;`, ";", `\\`, `\`).Replace(parts[1])
+		out[key] = append(out[key], vCardValue{params: params, value: value})
 	}
 	return out
+}
+
+// vCardPick deterministically selects the display value among repeated
+// occurrences (review CR-08): the lowest explicit PREF=n wins (vCard 4.0),
+// then the first TYPE=PREF occurrence (vCard 3.0), then file order.
+func vCardPick(values []vCardValue) string {
+	if len(values) == 0 {
+		return ""
+	}
+	best := values[0].value
+	bestPref := 1 << 30
+	for _, v := range values {
+		for _, p := range v.params["PREF"] {
+			if n, e := strconv.Atoi(p); e == nil && n < bestPref {
+				bestPref, best = n, v.value
+			}
+		}
+	}
+	if bestPref != 1<<30 {
+		return best
+	}
+	for _, v := range values {
+		for _, p := range v.params["TYPE"] {
+			if p == "PREF" {
+				return v.value
+			}
+		}
+	}
+	return best
 }
 func mailboxData(b object) (signals.Mailbox, error) {
 	if e := stringFields(b, "", "host username password folder"); e != nil {

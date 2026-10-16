@@ -13,6 +13,8 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -23,6 +25,13 @@ func TestExternalIntegrations(t *testing.T) {
 	credentials := map[string]any{"email": "integrations@computer.test", "password": "test-password"}
 	a.request("POST", "/api/signup", credentials, 201)
 	a.request("POST", "/api/auth/login", credentials, 200)
+	// CardDAV fixture (reviews CR-07/CR-08): the served multistatus is
+	// mutable so one test can walk the reconciliation policy — full snapshot,
+	// partially-withheld response, remote deletion, empty response.
+	var davMu sync.Mutex
+	var davBody string
+	setBody := func(body string) { davMu.Lock(); davBody = body; davMu.Unlock() }
+	getBody := func() string { davMu.Lock(); defer davMu.Unlock(); return davBody }
 	dav := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "REPORT" || r.Header.Get("Depth") != "1" {
 			t.Error("invalid CardDAV request")
@@ -33,29 +42,89 @@ func TestExternalIntegrations(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/xml")
 		w.WriteHeader(207)
-		io.WriteString(w, `<d:multistatus xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav"><d:response><d:href>/card.vcf</d:href><d:propstat><d:prop><card:address-data>BEGIN:VCARD
-UID:contact-1
-FN:Contact Name
-EMAIL:first@computer.test
-EMAIL:last@computer.test
-TEL:1234
-END:VCARD</card:address-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`)
+		io.WriteString(w, getBody())
 	}))
 	defer dav.Close()
+	card1 := `<d:response><d:href>/card.vcf</d:href><d:propstat><d:prop><card:address-data>BEGIN:VCARD
+UID:contact-1
+FN:Contact Name
+EMAIL:last@computer.test
+EMAIL;TYPE=PREF:preferred@computer.test
+TEL:1234
+END:VCARD</card:address-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`
+	card2 := `<d:response><d:href>/card2.vcf</d:href><d:propstat><d:prop><card:address-data>BEGIN:VCARD
+UID:contact-2
+FN:Second Contact
+EMAIL:second@computer.test
+END:VCARD</card:address-data></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`
+	card2Withheld := `<d:response><d:href>/card2.vcf</d:href><d:propstat><d:prop/><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response>`
+	wrap := func(responses ...string) string {
+		return `<d:multistatus xmlns:d="DAV:" xmlns:card="urn:ietf:params:xml:ns:carddav">` + strings.Join(responses, "") + `</d:multistatus>`
+	}
+	contactsOf := func() []map[string]any {
+		t.Helper()
+		res, e := a.c.Get(srv.URL + "/api/contacts")
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer res.Body.Close()
+		var contacts []map[string]any
+		json.NewDecoder(res.Body).Decode(&contacts)
+		return contacts
+	}
 	req := map[string]any{"nextcloudUrl": dav.URL, "username": "nextcloud-user", "password": "app-password"}
-	if v := a.request("POST", "/api/contacts/sync", req, 200); v["synced"] != float64(1) {
-		t.Fatal("CardDAV sync")
+
+	// Full snapshot: both cards import; the PREF occurrence wins the repeated
+	// EMAIL property (review CR-08 — deterministic selection, no data loss).
+	setBody(wrap(card1, card2))
+	if v := a.request("POST", "/api/contacts/sync", req, 200); v["synced"] != float64(2) || v["removed"] != float64(0) {
+		t.Fatal("CardDAV sync", v)
 	}
-	a.request("POST", "/api/contacts/sync", req, 200)
-	res, e := a.c.Get(srv.URL + "/api/contacts")
-	if e != nil {
-		t.Fatal(e)
+	contacts := contactsOf()
+	if len(contacts) != 2 {
+		t.Fatal("CardDAV import count", contacts)
 	}
-	var contacts []map[string]any
-	json.NewDecoder(res.Body).Decode(&contacts)
-	res.Body.Close()
-	if len(contacts) != 1 || contacts[0]["email"] != "last@computer.test" {
-		t.Fatal("CardDAV upsert/parse", contacts)
+	for _, c := range contacts {
+		if c["uid"] == "contact-1" && c["email"] != "preferred@computer.test" {
+			t.Fatal("repeated EMAIL did not resolve to the PREF value:", c)
+		}
+	}
+	// Idempotent re-sync: nothing removed, nothing duplicated.
+	if v := a.request("POST", "/api/contacts/sync", req, 200); v["synced"] != float64(2) || v["removed"] != float64(0) {
+		t.Fatal("CardDAV re-sync", v)
+	}
+	if len(contactsOf()) != 2 {
+		t.Fatal("CardDAV re-sync duplicated contacts")
+	}
+
+	// Partially-withheld response (card2's data 404s): must NOT be read as a
+	// remote deletion (review CR-07 — never delete from a partial snapshot).
+	setBody(wrap(card1, card2Withheld))
+	if v := a.request("POST", "/api/contacts/sync", req, 200); v["removed"] != float64(0) {
+		t.Fatal("partial response triggered reconciliation:", v)
+	}
+	if len(contactsOf()) != 2 {
+		t.Fatal("partial response deleted a contact")
+	}
+
+	// Complete snapshot without card2: the remote deletion is mirrored.
+	setBody(wrap(card1))
+	if v := a.request("POST", "/api/contacts/sync", req, 200); v["synced"] != float64(1) || v["removed"] != float64(1) {
+		t.Fatal("CardDAV deletion reconciliation", v)
+	}
+	contacts = contactsOf()
+	if len(contacts) != 1 || contacts[0]["uid"] != "contact-1" {
+		t.Fatal("wrong contact survived reconciliation:", contacts)
+	}
+
+	// Empty response: the guard preserves everything (a server fault that
+	// answers 207 with zero cards must not wipe the address book).
+	setBody(wrap())
+	if v := a.request("POST", "/api/contacts/sync", req, 200); v["synced"] != float64(0) || v["removed"] != float64(0) {
+		t.Fatal("empty response reconciliation", v)
+	}
+	if len(contactsOf()) != 1 {
+		t.Fatal("empty response deleted contacts")
 	}
 	listener, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {

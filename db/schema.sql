@@ -138,6 +138,11 @@ CREATE TABLE "Contact" (
   email text,
   phone text,
   "cardDavUrl" text,
+  -- CardDAV provenance (review CR-07): the address-book URL this contact was
+  -- imported from. Deletion reconciliation is scoped to it, so manually
+  -- created contacts (NULL) and other address books' imports are never
+  -- touched by a sync.
+  source text,
   "userId" text NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   "updatedAt" timestamptz NOT NULL DEFAULT now(),

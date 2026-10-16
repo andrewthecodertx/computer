@@ -162,7 +162,7 @@ already see.
 | GET | `/api/alerts/check` | Undismissed bookmarks due within 15 minutes, soonest first |
 | DELETE | `/api/alerts/{bookmarkId}` | `{ok:true}`; sets `alertSent` |
 | GET | `/api/contacts` | Synced contacts with `_count.bookmarks` |
-| POST | `/api/contacts/sync` | `{synced}`; `{nextcloudUrl,username,password,cardDavPath?}` |
+| POST | `/api/contacts/sync` | `{synced,removed}`; `{nextcloudUrl,username,password,cardDavPath?}`. Mirrors the configured address book: contacts previously imported from the SAME source URL that the server no longer returns are removed (`removed`), but only on a complete, non-empty snapshot — partial or empty responses never delete. Manually created contacts and other address books' imports are untouched; bookmarks keep working (contactId is SET NULL) |
 | GET | `/api/settings/imap` | Configuration with masked password, or `null` |
 | POST | `/api/settings/imap` | `{ok:true}`; `{host,port?,tls?,username,password,folder?}`; empty/masked password preserves an existing password |
 | POST | `/api/imap/test` | `{ok:true}` after real connection/login; same mailbox fields |

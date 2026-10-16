@@ -70,7 +70,14 @@ export function SettingsClient({ oidc, callbackUrl }: { oidc: OidcStatus; callba
         body: JSON.stringify(ncConfig),
       })
       const data = await res.json().catch(() => null)
-      if (res.ok && data?.synced !== undefined) { toast.success(`Synced ${data.synced} contacts`); invalidateReference('contacts') }
+      if (res.ok && data?.synced !== undefined) {
+        // Review CR-07: the sync mirrors the address book — remotely deleted
+        // contacts are removed too (scoped to this source, never from partial
+        // responses). Surface both counts so the policy is visible.
+        const removed = typeof data.removed === 'number' && data.removed > 0 ? `, removed ${data.removed} deleted on the server` : ''
+        toast.success(`Synced ${data.synced} contacts${removed}`)
+        invalidateReference('contacts')
+      }
       else toast.error(data?.error ?? 'Sync failed')
     } catch { toast.error('Sync failed') }
     finally { setSyncingContacts(false) }
