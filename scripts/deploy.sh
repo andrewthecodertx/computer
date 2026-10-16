@@ -7,11 +7,17 @@
 #   HOST=app-server DOMAIN=computer.example.tld CERTBOT_EMAIL=ops@example.tld \
 #     ./scripts/deploy.sh          (or: make deploy with the same variables)
 #
-# Flow: record the exact git revision, rsync the source tree to the server,
-# then run scripts/server-deploy.sh there under sudo (one password prompt) to
-# provision packages, back up the database, build the Compose stack (images
-# are tagged with the revision), and configure nginx + Let's Encrypt from
-# deploy/nginx/computer.conf.template.
+# Flow: record the exact git revision, rsync the source tree to a UNIQUE
+# staging directory on the server, then run scripts/server-deploy.sh there
+# under sudo (one password prompt). The server script takes a deployment
+# lock (flock) BEFORE publishing the staged tree into the shared release
+# directory, provisions packages, backs up the database, builds the Compose
+# stack (images are tagged with the revision), configures nginx + Let's
+# Encrypt from deploy/nginx/computer.conf.template, and records the revision
+# marker only after everything passed (review CR-11: overlapping deploys can
+# no longer mix source and release state — synchronization targets are
+# per-release, mutation of the shared directory is serialized, and the last
+# successful marker survives failures).
 #
 # Review OPS-04: a release is a known revision — dirty working trees are
 # refused unless ALLOW_DIRTY=1 acknowledges them, the revision is recorded on
@@ -51,14 +57,20 @@ REMOTE_USER="$(ssh -G "$HOST" | awk '/^user /{print $2; exit}')"
 [ -n "$REMOTE_USER" ] || die "could not determine ssh user for $HOST"
 command -v rsync >/dev/null 2>&1 || die "rsync is required locally (e.g. sudo apt install rsync / sudo pacman -S rsync)"
 
-# --- 1. Prepare the remote directory (may prompt for your sudo password) -------
-log "Ensuring $HOST:$REMOTE_DIR exists and belongs to $REMOTE_USER"
-ssh -t "$HOST" "sudo sh -c 'mkdir -p \"$REMOTE_DIR\" && chown \"$REMOTE_USER:\" \"$REMOTE_DIR\"'"
+# --- 1. Prepare the remote directories (may prompt for your sudo password) ------
+# The release directory is shared and mutable; this deploy's staging directory
+# is unique (rev + local pid), so overlapping rsyncs never touch shared
+# release inputs (review CR-11).
+STAGING_ROOT="$REMOTE_DIR-staging"
+STAGE="$STAGING_ROOT/$REV-$$"
+log "Ensuring $HOST:$REMOTE_DIR and $STAGING_ROOT exist and belong to $REMOTE_USER"
+ssh -t "$HOST" "sudo sh -c 'mkdir -p \"$REMOTE_DIR\" \"$STAGING_ROOT\" && chown \"$REMOTE_USER:\" \"$REMOTE_DIR\" \"$STAGING_ROOT\"'"
 
-# --- 2. Sync the source tree ----------------------------------------------------
-log "Syncing repository to $HOST:$REMOTE_DIR"
-# --delete mirrors the repo; excluded files (the server's .env, build output)
-# are protected from deletion.
+# --- 2. Sync the source tree to this deploy's staging directory ----------------
+log "Syncing repository to $HOST:$STAGE"
+# --delete mirrors the repo into the (empty) stage; excluded files (a local
+# .env, build output) never ship. The server-side publish step protects the
+# server's own .env and release marker.
 rsync -az --delete \
   --exclude '.git' \
   --exclude '.env' \
@@ -69,14 +81,16 @@ rsync -az --delete \
   --exclude 'web/out' \
   --exclude 'web/*.tsbuildinfo' \
   --exclude '*.log' \
-  "$REPO_ROOT/" "$HOST:$REMOTE_DIR/"
+  "$REPO_ROOT/" "$HOST:$STAGE/"
 
 # --- 3. Run the server-side deploy as root (may prompt for your sudo password) --
-log "Running server-side deploy (backup + build + nginx + TLS)"
-ssh -t "$HOST" "sudo bash '$REMOTE_DIR/scripts/server-deploy.sh' '$REMOTE_DIR' '$DOMAIN' '$CERTBOT_EMAIL' '$REMOTE_USER' '$REV'"
-
-# Server-owned release marker (excluded from rsync --delete above).
-ssh "$HOST" "printf '%s\n' '$REV' > '$REMOTE_DIR/.deployed-revision'"
+# The STAGED copy of the script runs (not the old one in $REMOTE_DIR): it
+# takes the server-side deployment lock, publishes the stage into the shared
+# release directory, and records .deployed-revision only after everything
+# passed — a failed deploy preserves the last successful release marker
+# (review CR-11/OPS-04).
+log "Running server-side deploy (lock + publish + backup + build + nginx + TLS)"
+ssh -t "$HOST" "sudo bash '$STAGE/scripts/server-deploy.sh' '$REMOTE_DIR' '$DOMAIN' '$CERTBOT_EMAIL' '$REMOTE_USER' '$REV' '$STAGE'"
 
 # --- 4. Final check from this machine ---------------------------------------------
 log "Verifying https://$DOMAIN/login from this machine"

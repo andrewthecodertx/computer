@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 # Server-side half of the deployment, run as root on the target server by
-# scripts/deploy.sh:  ssh -t HOST sudo bash .../server-deploy.sh DIR DOMAIN EMAIL USER [REVISION]
+# scripts/deploy.sh:
+#   ssh -t HOST sudo bash .../server-deploy.sh DIR DOMAIN EMAIL USER [REVISION] [STAGE]
 #
-# Provisions missing packages (docker, compose plugin, nginx, certbot),
-# writes .env on first deploy, builds/starts the Compose stack, waits for
-# health, and installs the nginx reverse proxy with a Let's Encrypt cert.
+# Provisions missing packages (docker, compose plugin, nginx, certbot,
+# rsync), then — under a server-wide deployment lock (review CR-11) —
+# publishes the per-deploy STAGE directory into the shared release DIR,
+# writes .env on first deploy, backs up the database, builds/starts the
+# Compose stack, waits for health, installs the nginx reverse proxy with a
+# Let's Encrypt cert, and records the release marker only after everything
+# passed. Overlapping deployments serialize on the lock; their rsync targets
+# are unique staging directories, so shared release inputs never change
+# mid-flight.
 set -euo pipefail
 
-REMOTE_DIR="${1:?usage: server-deploy.sh DIR DOMAIN EMAIL RUN_USER [REVISION]}"
+REMOTE_DIR="${1:?usage: server-deploy.sh DIR DOMAIN EMAIL RUN_USER [REVISION] [STAGE]}"
 DOMAIN="$2"
 EMAIL="$3"
 RUN_USER="$4"
 REVISION="${5:-}"
+STAGE="${6:-}"
 # Host-side ports for the Compose bindings. The defaults from docker-compose.yml
 # (8080/3000) collide with other apps on shared servers, so production pins
 # these via .env; override here if 18080/13000 are ever taken too.
@@ -27,7 +35,18 @@ log() { printf '\033[1;34m[server]==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[server] error:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = "0" ] || die "must run as root (the local deploy.sh does: ssh -t ... sudo bash $0)"
-[ -f "$REMOTE_DIR/docker-compose.yml" ] || die "$REMOTE_DIR/docker-compose.yml missing - rsync first"
+
+# --- 0. Serialize deployments (review CR-11) ------------------------------------
+# One server-wide lock held for the whole critical section: publishing the
+# staged tree, the Compose build/release, nginx configuration and the release
+# marker must never interleave with a second deployment. A waiter blocks (up
+# to 30 minutes) instead of mixing source and release state; the lock dies
+# with this process, so a crashed deploy cannot wedge the server.
+DEPLOY_LOCK="${DEPLOY_LOCK:-/var/lock/computer-deploy.lock}"
+exec 9>"$DEPLOY_LOCK"
+log "Waiting for the deployment lock ($DEPLOY_LOCK)"
+flock -w 1800 9 || die "another deployment held $DEPLOY_LOCK for more than 30 minutes; refusing to overlap"
+log "Deployment lock acquired"
 
 # --- 1. Provision packages ----------------------------------------------------
 log "Checking required packages"
@@ -45,6 +64,8 @@ if ! docker compose version >/dev/null 2>&1; then
   install_pkg docker-compose-v2 || install_pkg docker-compose-plugin || true
 fi
 command -v nginx >/dev/null 2>&1 || install_pkg nginx || die "nginx not installed and unavailable via apt"
+command -v rsync >/dev/null 2>&1 || install_pkg rsync || die "rsync not installed and unavailable via apt (needed to publish the staged release)"
+command -v flock >/dev/null 2>&1 || die "flock is required to serialize deployments (util-linux)"
 if ! command -v certbot >/dev/null 2>&1; then
   install_pkg certbot || die "certbot unavailable via apt"
   install_pkg python3-certbot-nginx || die "python3-certbot-nginx unavailable via apt"
@@ -106,6 +127,27 @@ log "buildx plugin: $(docker buildx version 2>/dev/null | head -n1)"
 systemctl enable --now docker nginx
 # Let RUN_USER drive docker without sudo for day-to-day commands.
 id -nG "$RUN_USER" | tr ' ' '\n' | grep -qx docker || usermod -aG docker "$RUN_USER"
+
+# --- 1b. Publish the staged release into the shared directory (under lock) -------
+# Review CR-11: the workstation rsynced a UNIQUE staging directory, so this
+# mirror is the only moment shared release inputs change — and it happens
+# atomically-ish under the deployment lock, never mid-build of another run.
+if [ -n "$STAGE" ]; then
+  [ -d "$STAGE" ] || die "staging directory $STAGE is missing"
+  mkdir -p "$REMOTE_DIR"
+  log "Publishing staged release $STAGE -> $REMOTE_DIR"
+  # The server's own .env (secrets) and the last successful release marker
+  # survive the mirror; everything else becomes exactly the staged revision.
+  rsync -a --delete \
+    --exclude '.env' \
+    --exclude '.env.*' \
+    --exclude '.deployed-revision' \
+    "$STAGE/" "$REMOTE_DIR/"
+  rm -rf "$STAGE"
+  # Best-effort prune of stages abandoned by failed deploys (older than 7 days).
+  find "$(dirname "$STAGE")" -maxdepth 1 -mindepth 1 -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+fi
+[ -f "$REMOTE_DIR/docker-compose.yml" ] || die "$REMOTE_DIR/docker-compose.yml missing - rsync first"
 
 # --- 2. .env (created once; never touch AUTH_SECRET afterwards) ---------------
 cd "$REMOTE_DIR"
@@ -300,4 +342,13 @@ for _ in $(seq 10); do
   sleep 3
 done
 [ -n "$ok" ] || die "nginx -> web TLS check failed after retries"
+
+# --- 7. Release marker (review CR-11/OPS-04) --------------------------------------
+# Recorded only now that every check passed, so .deployed-revision always
+# names the revision actually serving; a failed deploy leaves the previous
+# marker (and the previous revision-tagged images) intact for rollback.
+if [ -n "$REVISION" ]; then
+  printf '%s\n' "$REVISION" > "$REMOTE_DIR/.deployed-revision"
+  log "Recorded deployed revision $REVISION"
+fi
 log "Server-side deploy complete"
