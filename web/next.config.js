@@ -7,8 +7,9 @@ module.exports = {
   allowedDevOrigins: ['127.0.0.1'],
   async headers() {
     // The UI renders user-supplied URLs and remote ogImage/favicon values.
-    // A full CSP would need per-page nonces for Next's inline runtime; these
-    // headers are the safe subset that cannot break rendering.
+    // The Content-Security-Policy (nonce-based, review CR-10) is emitted per
+    // response by web/middleware.ts so Next's inline bootstrap scripts carry
+    // the nonce; these headers are the static non-CSP subset.
     return [
       {
         source: '/:path*',
